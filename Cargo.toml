@@ -1,0 +1,10 @@
+[package]
+name = "rs-google-photos-sync"
+version = "0.1.0"
+authors = ["Edin Mujagic <edinmujagic2 at gmail com>"]
+edition = "2018"
+
+[dependencies]
+ajson = "0.2.0"
+opener = "0.4.0"
+url = "2.1.0"
