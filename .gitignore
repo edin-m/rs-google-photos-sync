@@ -12,3 +12,4 @@ Cargo.lock
 secrets
 
 .idea
+.DS_Store
