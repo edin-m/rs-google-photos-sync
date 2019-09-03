@@ -12,6 +12,18 @@ extern crate nickel;
 
 extern crate reqwest;
 
+#[macro_use]
+extern crate serde;
+
+#[macro_use]
+extern crate serde_json;
+
+#[macro_use]
+extern crate serde_derive;
+
+extern crate chrono;
+
+
 use nickel::{Nickel, Mountable, Request, ListeningServer,
              HttpRouter, hyper::Url};
 
@@ -19,6 +31,11 @@ use reqwest::{Response};
 
 use serde::{Deserialize, Serialize};
 use serde_json::Result;
+
+mod my_db;
+mod google_api;
+mod error;
+mod util;
 
 struct GoogleWebCredentials {
     pub client_id: String,
@@ -39,60 +56,68 @@ struct GoogleToken {
     pub token_type: String
 }
 
+// =============
+
 const CALLBACK_URL: &'static str = "http://localhost:3001/oauth2redirect";
 
 fn main() {
-    let credentials = parse_credentials();
 
-    println!("Hello, world!");
-    println!("client id {}", credentials.client_id);
-    println!("auth uri {}", credentials.auth_uri);
-    println!("token uri {}", credentials.token_uri);
-    println!("redirect uris {}", credentials.redirect_uris.len());
+    let mut x = google_api::GoogleAuthApi::create();
+    let token = x.get_token();
 
-    let url = create_authorization_url(&credentials);
-    println!("authorize uri {}", url);
+    println!("{:#?}", token);
 
-    let code = get_authorization_code(url);
-    println!("authroize code {}", code.0);
+//    let credentials = parse_credentials();
+//
+//    println!("Hello, world!");
+//    println!("client id {}", credentials.client_id);
+//    println!("auth uri {}", credentials.auth_uri);
+//    println!("token uri {}", credentials.token_uri);
+//    println!("redirect uris {}", credentials.redirect_uris.len());
 
-    let token = get_token(&credentials, code);
-    println!("access token {}", token.access_token);
-    println!("refresh token {}", token.refresh_token);
+//    let url = create_authorization_url(&credentials);
+//    println!("authorize uri {}", url);
+//
+//    let code = get_authorization_code(url);
+//    println!("authroize code {}", code.0);
+//
+//    let token = get_token(&credentials, code);
+//    println!("access token {}", token.access_token);
+//    println!("refresh token {}", token.refresh_token);
 }
 
-fn parse_credentials() -> GoogleWebCredentials {
-    let f = File::open("secrets/credentials.json").unwrap();
-    let json = ajson::parse_from_read(f).unwrap();
-
-    let client_id = json.get("web.client_id").unwrap();
-    let client_secret = json.get("web.client_secret").unwrap();
-    let auth_uri = json.get("web.auth_uri").unwrap();
-    let token_uri = json.get("web.token_uri").unwrap();
-    let items = json.get("web.redirect_uris").unwrap().to_vec();
-
-    let mut v: Vec<String> = Vec::new();
-    for i in &items {
-        v.push(i.to_string())
-    }
-
-    GoogleWebCredentials {
-        client_id: client_id.to_string(),
-        client_secret: client_secret.to_string(),
-        auth_uri: auth_uri.to_string(),
-        token_uri: token_uri.to_string(),
-        redirect_uris: v
-    }
-}
+//fn parse_credentials() -> GoogleWebCredentials {
+//    let f = File::open("secrets/credentials.json").unwrap();
+//    let json = ajson::parse_from_read(f).unwrap();
+//
+//    let client_id = json.get("web.client_id").unwrap();
+//    let client_secret = json.get("web.client_secret").unwrap();
+//    let auth_uri = json.get("web.auth_uri").unwrap();
+//    let token_uri = json.get("web.token_uri").unwrap();
+//    let items = json.get("web.redirect_uris").unwrap().to_vec();
+//
+//    let mut v: Vec<String> = Vec::new();
+//    for i in &items {
+//        v.push(i.to_string())
+//    }
+//
+//    GoogleWebCredentials {
+//        client_id: client_id.to_string(),
+//        client_secret: client_secret.to_string(),
+//        auth_uri: auth_uri.to_string(),
+//        token_uri: token_uri.to_string(),
+//        redirect_uris: v
+//    }
+//}
 
 fn create_authorization_url(credentials: &GoogleWebCredentials) -> String {
     let scopes = google_photos_api_read_only_scope().join(" ");
 
     format!("{}?scope={}&response_type=code&redirect_uri={}&access_type=offline&client_id={}",
-           credentials.auth_uri,
-           scopes,
-            "http://localhost:3001/oauth2redirect",
-           credentials.client_id,
+            credentials.auth_uri,
+            scopes,
+            CALLBACK_URL,
+            credentials.client_id,
     )
 }
 
