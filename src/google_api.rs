@@ -73,9 +73,6 @@ impl GoogleAuthApi {
     pub fn create() -> Self {
         let auth = GoogleAuthApi::read_stored();
 
-        println!("wtf {:#?}", auth.credentials);
-        println!("wtf {:#?}", auth.token);
-
         auth
     }
 
@@ -89,7 +86,7 @@ impl GoogleAuthApi {
         match &self.token {
             Some(token) => {
                 if token.is_expired() {
-                    println!("token expired, do refresh_token now");
+                    println!("token expired, refreshing");
                     self.renew_token();
                 }
             }
@@ -119,8 +116,20 @@ impl GoogleAuthApi {
         self.token = Some(google_token);
     }
 
-    fn renew_token(&self) {
+    fn renew_token(&mut self) {
+        let mut token = self.token.take().unwrap();
 
+        let refresh_token = get_refresh_token(
+            &self.credentials.web, &token.token,
+        );
+
+        token.token.access_token = refresh_token.access_token;
+        token.token.expires_in = refresh_token.expires_in;
+        token.token_created_at = Utc::now();
+
+        token.persist();
+
+        self.token = Some(token);
     }
 }
 
@@ -195,7 +204,22 @@ fn get_token(credentials: &GoogleWebCredentials, code: GoogleAuthorizationCode) 
         &credentials, &code
     );
 
-    reqwest_token(&credentials.token_uri, token_request)
+    reqwest_token::<GoogleApiToken>(&credentials.token_uri, token_request)
+}
+
+#[derive(Deserialize, Debug)]
+struct RefreshToken {
+    pub expires_in: u32,
+    pub access_token: String,
+    pub token_type: String
+}
+
+fn get_refresh_token(credentials: &GoogleWebCredentials, api_token: &GoogleApiToken) -> RefreshToken {
+    let token_request: HashMap<String, String> = build_refresh_token_request(
+        &credentials, &api_token
+    );
+
+    reqwest_token::<RefreshToken>(&credentials.token_uri, token_request)
 }
 
 fn build_auth_token_request(credentials: &GoogleWebCredentials,
@@ -211,7 +235,22 @@ fn build_auth_token_request(credentials: &GoogleWebCredentials,
     token_request
 }
 
-fn reqwest_token(token_uri: &String, token_request: HashMap<String, String>) -> GoogleApiToken {
+fn build_refresh_token_request(credentials: &GoogleWebCredentials,
+                               api_token: &GoogleApiToken,
+) -> HashMap<String, String> {
+    let mut refresh_request = HashMap::new();
+
+    refresh_request.insert("refresh_token".to_string(), api_token.refresh_token.to_string());
+    refresh_request.insert("client_id".to_string(), credentials.client_id.to_string());
+    refresh_request.insert("client_secret".to_string(), credentials.client_secret.to_string());
+    refresh_request.insert("grant_type".to_string(), "refresh_token".to_string());
+
+    refresh_request
+}
+
+fn reqwest_token<T>(token_uri: &String, token_request: HashMap<String, String>) -> T
+    where T: DeserializeOwned
+{
     let client = reqwest::Client::new();
 
     println!("{:#?}", token_request);
@@ -221,11 +260,11 @@ fn reqwest_token(token_uri: &String, token_request: HashMap<String, String>) -> 
         .send().unwrap().json().unwrap()
 }
 
-trait Storage {
+trait StorageLoader {
     fn read_stored() -> Self;
 }
 
-impl Storage for GoogleAuthApi {
+impl StorageLoader for GoogleAuthApi {
     fn read_stored() -> Self {
         let credentials = GoogleCredentials::read_stored();
         let token = Option::<GoogleToken>::read_stored();
@@ -237,7 +276,7 @@ impl Storage for GoogleAuthApi {
     }
 }
 
-impl Storage for GoogleCredentials {
+impl StorageLoader for GoogleCredentials {
     fn read_stored() -> GoogleCredentials {
         let path = "secrets/credentials.json";
 
@@ -245,7 +284,7 @@ impl Storage for GoogleCredentials {
     }
 }
 
-impl Storage for Option<GoogleToken> {
+impl StorageLoader for Option<GoogleToken> {
     fn read_stored() -> Self {
         let path = "secrets/token.json";
 
@@ -273,8 +312,3 @@ impl Persistage for GoogleToken {
     }
 }
 
-struct GoogleAuthorization(String);
-
-impl GoogleAuthorization {
-
-}
