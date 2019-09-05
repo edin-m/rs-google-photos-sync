@@ -1,33 +1,36 @@
-use std::result;
-use std::time;
-use std::time::Instant;
-use std::fs::File;
-use std::io::{BufReader, Write};
-use std::option::Option;
 use std::clone::Clone;
+use std::cmp::min;
+use std::collections::HashMap;
+use std::convert::{From, Into};
+use std::fs::File;
+use std::io::{BufReader, Write, copy};
 use std::marker::Copy;
 use std::ops::Add;
-use std::thread;
+use std::option::Option;
+use std::result;
 use std::sync::mpsc;
-use std::collections::HashMap;
-use std::convert::{Into, From};
-use std::cmp::min;
+use std::thread;
+use std::time;
+use std::time::Instant;
 
-use chrono::{DateTime, Utc, FixedOffset, TimeZone, Duration, Datelike};
+use chrono::{DateTime, Datelike, Duration, FixedOffset, TimeZone, Utc};
 
 use reqwest::header;
 use reqwest::{header::HeaderMap, header::HeaderValue, Client, ClientBuilder, Response};
 
-use serde::{Deserialize, Serialize, de::DeserializeOwned};
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json;
 
 use crate::google_api::GoogleToken;
-use crate::MediaItem;
+use crate::{MediaItem, Photo};
 
 pub fn search(token: &GoogleToken, num_days_back: i32, limit_hint: usize) -> Vec<MediaItem> {
     let mut headers = HeaderMap::new();
     let token = format!("Bearer {}", token.token.access_token);
-    headers.insert(header::AUTHORIZATION, HeaderValue::from_str(&token).unwrap());
+    headers.insert(
+        header::AUTHORIZATION,
+        HeaderValue::from_str(&token).unwrap(),
+    );
 
     let client = ClientBuilder::new()
         .default_headers(headers)
@@ -38,11 +41,12 @@ pub fn search(token: &GoogleToken, num_days_back: i32, limit_hint: usize) -> Vec
     let mut page_token: Option<String> = None;
 
     while media_items.len() < limit_hint {
-
         // TODO: don't generate filter each time
         let range = DateRange::range_from_days(num_days_back);
         let search_filter = SearchFilter {
-            dateFilter: DateFilter::from_range(range),
+            dateFilter: DateFilter {
+                ranges: vec![range],
+            },
             includeArchivedMedia: true,
         };
 
@@ -52,9 +56,13 @@ pub fn search(token: &GoogleToken, num_days_back: i32, limit_hint: usize) -> Vec
             filters: search_filter,
         };
 
-        let mut resp: SearchResponse = client.post("https://photoslibrary.googleapis.com/v1/mediaItems:search")
+        let mut resp: SearchResponse = client
+            .post("https://photoslibrary.googleapis.com/v1/mediaItems:search")
             .json(&search_request)
-            .send().unwrap().json().unwrap();
+            .send()
+            .unwrap()
+            .json()
+            .unwrap();
 
         println!("search result {} items", resp.mediaItems.len());
 
@@ -94,19 +102,7 @@ struct SearchFilter {
 
 #[derive(Serialize, Debug)]
 struct DateFilter {
-    ranges: Vec<DateRange>
-}
-
-impl DateFilter {
-    pub fn from_range(range: DateRange) -> DateFilter {
-        let mut filter = DateFilter {
-            ranges: Vec::new()
-        };
-
-        filter.ranges.push(range);
-
-        filter
-    }
+    ranges: Vec<DateRange>,
 }
 
 #[derive(Serialize, Debug)]
@@ -145,12 +141,14 @@ impl<T: TimeZone> From<DateTime<T>> for Date {
     }
 }
 
-pub fn batch_get(media_item_ids: &Vec<String>, google_token: &GoogleToken)
--> Vec<MediaItem>
-{
+pub fn batch_get(media_item_ids: &Vec<String>, google_token: &GoogleToken) -> Vec<MediaItem> {
     let groups = split_into_groups(media_item_ids, 50);
 
-    println!("split {} items into {} groups", media_item_ids.len(), groups.len());
+    println!(
+        "split {} items into {} groups",
+        media_item_ids.len(),
+        groups.len()
+    );
 
     let mut got = Vec::new();
 
@@ -167,9 +165,7 @@ pub fn batch_get(media_item_ids: &Vec<String>, google_token: &GoogleToken)
     got
 }
 
-fn _batch_get(media_item_ids: &Vec<&String>, google_token: &GoogleToken)
--> Vec<MediaItem>
-{
+fn _batch_get(media_item_ids: &Vec<&String>, google_token: &GoogleToken) -> Vec<MediaItem> {
     let mut url = String::from("https://photoslibrary.googleapis.com/v1/mediaItems:batchGet?");
 
     for media_item_id in media_item_ids {
@@ -178,35 +174,73 @@ fn _batch_get(media_item_ids: &Vec<&String>, google_token: &GoogleToken)
 
     let mut headers = HeaderMap::new();
     let token = format!("Bearer {}", google_token.token.access_token);
-    headers.insert(header::AUTHORIZATION, HeaderValue::from_str(&token).unwrap());
+    headers.insert(
+        header::AUTHORIZATION,
+        HeaderValue::from_str(&token).unwrap(),
+    );
 
     let client = ClientBuilder::new()
-        .default_headers(headers).build().unwrap();
+        .default_headers(headers)
+        .build()
+        .unwrap();
 
     let res: BatchGetResult = client.get(url.as_str()).send().unwrap().json().unwrap();
 
-    res.mediaItemResults.into_iter().map(|v| v.mediaItem).collect::<Vec<_>>()
+    res.mediaItemResults
+        .into_iter()
+        .map(|v| v.mediaItem)
+        .collect::<Vec<_>>()
 }
 
 #[derive(Deserialize, Debug)]
 #[allow(non_snake_case)]
 struct BatchGetResult {
-    pub mediaItemResults: Vec<MediaItemResult>
+    pub mediaItemResults: Vec<MediaItemResult>,
 }
 
 #[derive(Deserialize, Debug)]
 #[allow(non_snake_case)]
 struct MediaItemResult {
-    pub mediaItem: MediaItem
+    pub mediaItem: MediaItem,
 }
 
-fn download_files(media_items: &Vec<MediaItem>) {
+pub fn download_files(media_items: &Vec<MediaItem>, google_token: &GoogleToken) {
+    for media_item in media_items {
+        let url = create_download_url(media_item, google_token);
 
+        let mut headers = HeaderMap::new();
+        let token = format!("Bearer {}", google_token.token.access_token);
+
+        let client = ClientBuilder::new()
+            .default_headers(headers)
+            .build().unwrap();
+
+        println!("downloading url {} to {}", url, media_item.filename);
+
+        let mut resp = client.get(url.as_str()).send().unwrap();
+        let mut dest = File::create(&media_item.filename).unwrap();
+        copy(&mut resp, &mut dest).unwrap();
+    }
 }
 
-fn split_into_groups(items: &Vec<String>, group_size: usize)
-                     -> Vec<Vec<&String>>
-{
+fn create_download_url(media_item: &MediaItem, google_token: &GoogleToken) -> String {
+    let mut url = String::new();
+
+    if let Some(photo) = &media_item.mediaMetadata.photo {
+        url = url + format!(
+            "{}=w{}-h{}",
+            media_item.baseUrl,
+            media_item.mediaMetadata.width,
+            media_item.mediaMetadata.height
+        ).as_str();
+    } else {
+        panic!("video not supported");
+    }
+
+    url
+}
+
+fn split_into_groups(items: &Vec<String>, group_size: usize) -> Vec<Vec<&String>> {
     let mut groups = Vec::new();
 
     let num_groups = (items.len() as f32 / group_size as f32).ceil() as usize;
@@ -215,7 +249,7 @@ fn split_into_groups(items: &Vec<String>, group_size: usize)
         let mut vec = Vec::new();
 
         let start = i * group_size;
-        let end = min(items.len(),i * group_size + group_size);
+        let end = min(items.len(), i * group_size + group_size);
 
         for j in start..end {
             vec.push(items.get(j).unwrap());
@@ -224,7 +258,5 @@ fn split_into_groups(items: &Vec<String>, group_size: usize)
         groups.push(vec);
     }
 
-
     groups
 }
-
