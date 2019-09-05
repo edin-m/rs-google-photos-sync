@@ -11,6 +11,7 @@ use std::thread;
 use std::sync::mpsc;
 use std::collections::HashMap;
 use std::convert::{Into, From};
+use std::cmp::min;
 
 use chrono::{DateTime, Utc, FixedOffset, TimeZone, Duration, Datelike};
 
@@ -142,5 +143,88 @@ impl<T: TimeZone> From<DateTime<T>> for Date {
             day: date_time.day(),
         }
     }
+}
+
+pub fn batch_get(media_item_ids: &Vec<String>, google_token: &GoogleToken)
+-> Vec<MediaItem>
+{
+    let groups = split_into_groups(media_item_ids, 50);
+
+    println!("split {} items into {} groups", media_item_ids.len(), groups.len());
+
+    let mut got = Vec::new();
+
+    for group in groups {
+        let items = _batch_get(&group, google_token);
+
+        println!("fetched {}", items.len());
+
+        for item in items {
+            got.push(item);
+        }
+    }
+
+    got
+}
+
+fn _batch_get(media_item_ids: &Vec<&String>, google_token: &GoogleToken)
+-> Vec<MediaItem>
+{
+    let mut url = String::from("https://photoslibrary.googleapis.com/v1/mediaItems:batchGet?");
+
+    for media_item_id in media_item_ids {
+        url = url + &format!("mediaItemIds={}&", media_item_id);
+    }
+
+    let mut headers = HeaderMap::new();
+    let token = format!("Bearer {}", google_token.token.access_token);
+    headers.insert(header::AUTHORIZATION, HeaderValue::from_str(&token).unwrap());
+
+    let client = ClientBuilder::new()
+        .default_headers(headers).build().unwrap();
+
+    let res: BatchGetResult = client.get(url.as_str()).send().unwrap().json().unwrap();
+
+    res.mediaItemResults.into_iter().map(|v| v.mediaItem).collect::<Vec<_>>()
+}
+
+#[derive(Deserialize, Debug)]
+#[allow(non_snake_case)]
+struct BatchGetResult {
+    pub mediaItemResults: Vec<MediaItemResult>
+}
+
+#[derive(Deserialize, Debug)]
+#[allow(non_snake_case)]
+struct MediaItemResult {
+    pub mediaItem: MediaItem
+}
+
+fn download_files(media_items: &Vec<MediaItem>) {
+
+}
+
+fn split_into_groups(items: &Vec<String>, group_size: usize)
+                     -> Vec<Vec<&String>>
+{
+    let mut groups = Vec::new();
+
+    let num_groups = (items.len() as f32 / group_size as f32).ceil() as usize;
+
+    for i in 0..num_groups {
+        let mut vec = Vec::new();
+
+        let start = i * group_size;
+        let end = min(items.len(),i * group_size + group_size);
+
+        for j in start..end {
+            vec.push(items.get(j).unwrap());
+        }
+
+        groups.push(vec);
+    }
+
+
+    groups
 }
 
