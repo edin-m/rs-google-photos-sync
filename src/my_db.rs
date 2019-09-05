@@ -10,13 +10,14 @@ use std::boxed::Box;
 use std::path::Path;
 use std::fs::File;
 use std::io::Write;
+use std::collections::hash_map::Iter;
+use std::iter::Filter;
+
 use chrono::{DateTime, Utc};
 
 use serde::{de, Serialize, Deserialize, de::DeserializeOwned};
 use serde_json::{Value, Deserializer};
 use serde_json;
-
-type StringHashMap = HashMap<String, String>;
 
 pub struct KeyValueStore<T> {
     pub data: Box<HashMap<String, T>>,
@@ -25,7 +26,7 @@ pub struct KeyValueStore<T> {
 }
 
 impl<T> KeyValueStore<T>
-    where T: Serialize + DeserializeOwned + Copy
+    where T: Serialize + DeserializeOwned
 {
     pub fn new(path: &str) -> KeyValueStore<T> {
         let mut store = KeyValueStore {
@@ -39,20 +40,48 @@ impl<T> KeyValueStore<T>
         store
     }
 
-    pub fn get(&self, key: String) -> Option<&T>
+    pub fn get(&self, key: &String) -> Option<&T>
     {
-        self.data.get(&key)
+        self.data.get(key)
     }
 
-    pub fn set(&mut self, key: String, t: T) -> Option<T>
+    pub fn get_cloned(&self, key: &String) -> Option<T> {
+        if let Some(item) = self.data.get(key) {
+            let ser = serde_json::to_string(&item).unwrap();
+            Some(serde_json::from_str(&ser.to_string()).unwrap())
+        } else {
+            None
+        }
+    }
+
+    pub fn set(&mut self, key: &String, t: T) -> Option<T>
     {
-        let saved = self.data.insert(key, t);
+        let saved = self.data.insert(key.to_string(), t);
 
         if self.should_persist() {
             self.persist();
+            self.last_save_at = Utc::now();
         }
 
         saved
+    }
+
+    fn should_persist(&self) -> bool {
+        Utc::now().signed_duration_since(self.last_save_at).num_milliseconds() > 5000
+    }
+
+    pub fn filter_values<F>(&self, filter_fn: F) -> Vec<T>
+        where F: Fn(&(&String, &T)) -> bool
+    {
+        let mut results = Vec::<T>::new();
+
+        for (k, v) in self.data.iter().filter(filter_fn) {
+            if let Some(cloned) = self.get_cloned(k) {
+                results.push(cloned);
+            }
+        }
+
+        results
     }
 
     pub fn load(&mut self) {
@@ -61,35 +90,13 @@ impl<T> KeyValueStore<T>
             let data = fs::read_to_string(&self.path).unwrap();
             self.data = serde_json::from_str(&data).unwrap();
         }
+
+        println!("loaded {} stored items", self.data.len());
     }
 
     pub fn persist(&self) {
         let serialized = serde_json::to_string_pretty(&self.data.as_ref()).unwrap();
 
-        fs::write(&self.path, serialized);
-    }
-
-    fn should_persist(&self) -> bool {
-        Utc::now().signed_duration_since(self.last_save_at).num_milliseconds() > 5000
+        fs::write(&self.path, serialized).unwrap();
     }
 }
-
-//#[derive(Serialize, Deserialize, Copy, Clone, Debug)]
-//struct Point {
-//    pub x: i32,
-//    pub y: i32,
-//}
-
-//pub fn run_example() {
-//    fs::create_dir_all("db/my_db");
-//
-//    let mut store = KeyValueStore::new();
-//
-//    let x = Point { x: 100, y: 200 };
-//
-//    let v = store.set("wicked".to_string(), x);
-//    println!("set {} {}", v.unwrap().x, v.unwrap().y);
-//
-//    let v2: Point = store.get(&"wicked".to_string()).unwrap();
-//    println!("get {} {}", v2.x, v2.y);
-//}

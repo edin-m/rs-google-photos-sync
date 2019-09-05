@@ -155,7 +155,7 @@ struct GoogleAuthorizationCode(String);
 
 fn get_authorization_code(url: String) -> GoogleAuthorizationCode {
     // open a web page to authorize
-    opener::open(url);
+    opener::open(url).unwrap();
 
     // pull authorization
     let thread = thread::spawn(move|| {
@@ -166,7 +166,7 @@ fn get_authorization_code(url: String) -> GoogleAuthorizationCode {
         server.get("/oauth2redirect", middleware! { |request|
                 println!("{}", &request.origin.remote_addr);
                 let query_params = parse_query_str(format!("{}", request.origin.uri));
-                tx.send(query_params);
+                tx.send(query_params).unwrap();
                 "Authenticated"
         });
 
@@ -288,7 +288,7 @@ impl StorageLoader for Option<GoogleToken> {
     fn read_stored() -> Self {
         let path = "secrets/token.json";
 
-        if let Ok(file) = File::open(path) {
+        if let Ok(_) = File::open(path) {
             let token = util::read_json_file::<GoogleToken>(path.to_string());
             Some(token)
         } else {
@@ -307,8 +307,8 @@ impl Persistage for GoogleToken {
         let json: String = serde_json::to_string_pretty(&self).unwrap();
 
         let mut file = File::create(path).unwrap();
-        file.write(json.as_bytes());
-        file.sync_all();
+        file.write(json.as_bytes()).unwrap();
+        file.sync_all().unwrap();
     }
 }
 
