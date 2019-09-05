@@ -7,6 +7,7 @@ use std::string::ToString;
 use std::sync::mpsc;
 use std::vec::Vec;
 use std::{thread, time};
+use std::marker::Sync;
 
 extern crate opener;
 
@@ -123,7 +124,9 @@ fn search_and_store_items(num_days_back: i32, limit_hint: usize) {
 
     println!("media items {}", media_items.len());
 
-    on_media_items(media_items);
+    let mut storage = StoredItemStore::new("secrets/photos.data");
+
+    on_media_items(media_items, &mut storage);
 
     //    for media_item in media_items {
     //        let id = media_item.id.to_owned();
@@ -142,8 +145,7 @@ fn search_and_store_items(num_days_back: i32, limit_hint: usize) {
     //    storage.persist();
 }
 
-fn on_media_items(media_items: Vec<MediaItem>) {
-    let mut storage = StoredItemStore::new("secrets/photos.data");
+fn on_media_items(media_items: Vec<MediaItem>, storage: &mut StoredItemStore) {
 
     for media_item in media_items {
         let id = media_item.id.to_owned();
@@ -171,7 +173,9 @@ fn on_media_items(media_items: Vec<MediaItem>) {
 fn fix_duplicate_filenames(storage: &StoredItemStore) {}
 
 fn download_files(num_items: i32) {
-    let stored_items = select_files_for_download();
+    let mut storage = StoredItemStore::new("secrets/photos.data");
+
+    let stored_items = select_files_for_download(&mut storage);
 
     let ids = stored_items
         .iter()
@@ -183,19 +187,18 @@ fn download_files(num_items: i32) {
 
     let v = vec![ids.get(0).unwrap().to_owned()];
 
-    let media_items = google_photos::batch_get(&v, &token);
-
-    // TODO: save media items on download
-    //    on_media_items(media_items);
+    let media_items = google_photos::batch_get(&ids, &token);
 
     println!("batch get received {}", media_items.len());
 
     google_photos::download_files(&media_items, &token);
+
+    mark_downloaded(&media_items, &mut storage);
+
+    on_media_items(media_items, &mut storage);
 }
 
-fn select_files_for_download() -> Vec<StoredItem> {
-    let mut storage = StoredItemStore::new("secrets/photos.data");
-
+fn select_files_for_download(storage: &mut StoredItemStore) -> Vec<StoredItem> {
     let items = storage.filter_values(|(k, v)| {
         let mut result = true;
 
@@ -210,7 +213,27 @@ fn select_files_for_download() -> Vec<StoredItem> {
         result
     });
 
-    println!("{}", items.len());
+    println!("selected {} files to download", items.len());
 
     items
 }
+
+fn mark_downloaded(media_items: &Vec<MediaItem>, storage: &mut StoredItemStore) {
+    let ids = media_items
+        .iter()
+        .map(|item| item.id.to_owned())
+        .collect::<Vec<_>>();
+
+    for id in ids {
+        if let Some(mut stored_item) = storage.get_cloned(&id) {
+            let app_data = AppData {
+                download_info: Some(DownloadInfo {
+                    downloaded_at: Utc::now()
+                })
+            };
+            stored_item.appData = Some(app_data);
+            storage.set(&id, stored_item);
+        }
+    }
+}
+

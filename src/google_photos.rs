@@ -3,6 +3,8 @@ use std::cmp::min;
 use std::collections::HashMap;
 use std::convert::{From, Into};
 use std::fs::File;
+use std::fs;
+use std::path::Path;
 use std::io::{BufReader, Write, copy};
 use std::marker::Copy;
 use std::ops::Add;
@@ -12,6 +14,7 @@ use std::sync::mpsc;
 use std::thread;
 use std::time;
 use std::time::Instant;
+use std::sync::mpsc::channel;
 
 use chrono::{DateTime, Datelike, Duration, FixedOffset, TimeZone, Utc};
 
@@ -21,8 +24,10 @@ use reqwest::{header::HeaderMap, header::HeaderValue, Client, ClientBuilder, Res
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json;
 
+use threadpool::ThreadPool;
+
 use crate::google_api::GoogleToken;
-use crate::{MediaItem, Photo};
+use crate::{MediaItem, Photo, MediaMetaData};
 
 pub fn search(token: &GoogleToken, num_days_back: i32, limit_hint: usize) -> Vec<MediaItem> {
     let mut headers = HeaderMap::new();
@@ -204,26 +209,68 @@ struct MediaItemResult {
     pub mediaItem: MediaItem,
 }
 
-pub fn download_files(media_items: &Vec<MediaItem>, google_token: &GoogleToken) {
-    for media_item in media_items {
-        let url = create_download_url(media_item, google_token);
+pub fn download_files(media_items: &Vec<MediaItem>, google_token: &GoogleToken)
+{
+    let groups = split_into_groups(&media_items, 5);
 
-        let mut headers = HeaderMap::new();
-        let token = format!("Bearer {}", google_token.token.access_token);
+    fs::create_dir_all("google/photos").unwrap();
+    for group in groups {
+        let len = group.len();
+        let pool = ThreadPool::new(len);
+//        let (tx, rx) = channel();
+        let access_token = format!("{}", google_token.token.access_token);
 
-        let client = ClientBuilder::new()
-            .default_headers(headers)
-            .build().unwrap();
-
-        println!("downloading url {} to {}", url, media_item.filename);
-
-        let mut resp = client.get(url.as_str()).send().unwrap();
-        let mut dest = File::create(&media_item.filename).unwrap();
-        copy(&mut resp, &mut dest).unwrap();
+        for item in group {
+            let media_item = MediaItem {
+                id: "".to_string(),
+                baseUrl: item.baseUrl.to_owned(),
+                filename: item.filename.to_owned(),
+                mediaMetadata: MediaMetaData {
+                    creationTime: item.mediaMetadata.creationTime.to_owned(),
+                    width: item.mediaMetadata.width.to_owned(),
+                    height: item.mediaMetadata.height.to_owned(),
+                    photo: if let Some(_) = &item.mediaMetadata.photo {
+                        Some(Photo{})
+                    } else { None },
+                    video: None
+                }
+            };
+//            let tx = tx.clone();
+            let t = access_token.to_owned();
+            println!("downloading {}", media_item.filename);
+            pool.execute(move || {
+                let a = media_item;
+                let b = t;
+                _download_files(&a, &b);
+//                tx.send(1);
+            });
+        }
+        pool.join();
     }
 }
 
-fn create_download_url(media_item: &MediaItem, google_token: &GoogleToken) -> String {
+fn _download_files(media_item: &MediaItem, access_token: &String)
+{
+//    for media_item in media_items {
+        if let Some(url) = create_download_url(media_item) {
+            let mut headers = HeaderMap::new();
+            let token = format!("Bearer {}", access_token);
+
+            let client = ClientBuilder::new()
+                .default_headers(headers)
+                .build().unwrap();
+
+            println!("downloading url {} to {}", url, media_item.filename);
+
+            let mut resp = client.get(url.as_str()).send().unwrap();
+            let path = Path::new("google/photos").join(&media_item.filename);
+            let mut dest = File::create(path).unwrap();
+            copy(&mut resp, &mut dest).unwrap();
+        }
+//    }
+}
+
+fn create_download_url(media_item: &MediaItem) -> Option<String> {
     let mut url = String::new();
 
     if let Some(photo) = &media_item.mediaMetadata.photo {
@@ -233,14 +280,15 @@ fn create_download_url(media_item: &MediaItem, google_token: &GoogleToken) -> St
             media_item.mediaMetadata.width,
             media_item.mediaMetadata.height
         ).as_str();
+        Some(url)
     } else {
-        panic!("video not supported");
+        println!("video not supported");
+        None
     }
-
-    url
 }
 
-fn split_into_groups(items: &Vec<String>, group_size: usize) -> Vec<Vec<&String>> {
+fn split_into_groups<T>(items: &Vec<T>, group_size: usize) -> Vec<Vec<&T>>
+{
     let mut groups = Vec::new();
 
     let num_groups = (items.len() as f32 / group_size as f32).ceil() as usize;
