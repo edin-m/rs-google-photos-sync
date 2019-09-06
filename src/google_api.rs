@@ -5,7 +5,6 @@ use std::fs::File;
 use std::io::{BufReader, Write};
 use std::option::Option;
 use std::clone::Clone;
-use std::marker::Copy;
 use std::ops::Add;
 use std::thread;
 use std::sync::mpsc;
@@ -25,6 +24,7 @@ use opener;
 
 use crate::util;
 use crate::error::CustomResult;
+use serde::export::fmt::Debug;
 
 const CALLBACK_URL: &'static str = "http://localhost:3001/oauth2redirect";
 
@@ -159,7 +159,7 @@ fn get_authorization_code(url: String) -> GoogleAuthorizationCode {
     opener::open(url).unwrap();
 
     // pull authorization
-    let thread = thread::spawn(move|| {
+    let thread = thread::spawn(move || {
         let (tx, rx) = mpsc::sync_channel(1);
 
         let mut server = Nickel::new();
@@ -180,7 +180,7 @@ fn get_authorization_code(url: String) -> GoogleAuthorizationCode {
         params
     });
 
-    let item = thread.join().unwrap();
+    let item: HashMap<String, String> = thread.join().unwrap();
     println!("thread result the code for access is: {}", item.get("code").unwrap());
 
     GoogleAuthorizationCode(String::from(item.get("code").unwrap()))
@@ -220,7 +220,10 @@ fn get_refresh_token(credentials: &GoogleWebCredentials, api_token: &GoogleApiTo
         &credentials, &api_token
     );
 
-    reqwest_token::<RefreshToken>(&credentials.token_uri, token_request)
+    println!("requiesting refresh token");
+    let resp = reqwest_token::<RefreshToken>(&credentials.token_uri, token_request).unwrap();
+    println!("resp {:#?}", resp);
+    Ok(resp)
 }
 
 fn build_auth_token_request(credentials: &GoogleWebCredentials,
@@ -254,11 +257,12 @@ fn reqwest_token<T>(token_uri: &String, token_request: HashMap<String, String>) 
 {
     let client = reqwest::Client::new();
 
-    println!("{:#?}", token_request);
-
-    client.post(token_uri.as_str())
+    let resp = client.post(token_uri.as_str())
         .json(&token_request)
-        .send()?.json()?
+        .send()?.json()?;
+
+    // NOTE: doesn't work with direct result return
+    Ok(resp)
 }
 
 trait StorageLoader {
@@ -279,37 +283,41 @@ impl StorageLoader for GoogleAuthApi {
 
 impl StorageLoader for GoogleCredentials {
     fn read_stored() -> GoogleCredentials {
-        let path = "secrets/credentials.json";
+        let path = "secrets/credentials.json".to_string();
 
-        util::read_json_file::<GoogleCredentials>(path.to_string())
+        let credentials = util::read_json_file::<GoogleCredentials>(path);
+
+        match credentials {
+            Ok(c) => c,
+            Err(e) => {
+                panic!("Error loading credentials file {}", e);
+            }
+        }
     }
 }
 
 impl StorageLoader for Option<GoogleToken> {
     fn read_stored() -> Self {
-        let path = "secrets/token.json";
+        let path = "secrets/token.json".to_string();
 
-        if let Ok(_) = File::open(path) {
-            let token = util::read_json_file::<GoogleToken>(path.to_string());
-            Some(token)
-        } else {
-            None
-        }
+        util::read_json_file::<GoogleToken>(path).ok()
     }
 }
 
 trait Persistage {
-    fn persist(&self);
+    fn persist(&self) -> CustomResult<()>;
 }
 
 impl Persistage for GoogleToken {
-    fn persist(&self) {
+    fn persist(&self) -> CustomResult<()> {
         let path = "secrets/token.json";
-        let json: String = serde_json::to_string_pretty(&self).unwrap();
+        let json: String = serde_json::to_string_pretty(&self)?;
 
-        let mut file = File::create(path).unwrap();
-        file.write(json.as_bytes()).unwrap();
-        file.sync_all().unwrap();
+        let mut file = File::create(path)?;
+        file.write(json.as_bytes())?;
+        file.sync_all()?;
+
+        Ok(())
     }
 }
 

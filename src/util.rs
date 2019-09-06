@@ -8,11 +8,15 @@ use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json;
 
 use chrono::{DateTime, Utc};
+use serde::export::fmt::Debug;
+use crate::error::CustomResult;
 
-pub fn read_json_file<T>(path: String) -> T
+pub fn read_json_file<T>(path: String) -> CustomResult<T>
     where T: DeserializeOwned
 {
-    let file = File::open(path).unwrap();
+    let file = File::open(path)?;
     let reader = BufReader::new(file);
-    serde_json::from_reader(reader).unwrap()
+    let parsed = serde_json::from_reader(reader)?;
+
+    Ok(parsed)
 }
