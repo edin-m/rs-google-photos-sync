@@ -24,11 +24,12 @@ use reqwest::{Response};
 use opener;
 
 use crate::util;
+use crate::error::CustomResult;
 
 const CALLBACK_URL: &'static str = "http://localhost:3001/oauth2redirect";
 
 pub struct GoogleAuthApi {
-    pub credentials: GoogleCredentials,
+    credentials: GoogleCredentials,
     pub token: Option<GoogleToken>,
 }
 
@@ -82,7 +83,7 @@ impl GoogleAuthApi {
         self.token.clone().unwrap()
     }
 
-    fn normalize_token(&mut self) {
+    pub fn normalize_token(&mut self) {
         match &self.token {
             Some(token) => {
                 if token.is_expired() {
@@ -103,7 +104,7 @@ impl GoogleAuthApi {
 
         println!("authorization code: {:#?}", code);
 
-        let token = get_token(&self.credentials.web, code);
+        let token = get_token(&self.credentials.web, code).unwrap();
         println!("token {:#?}", token);
 
         let google_token = GoogleToken {
@@ -121,7 +122,7 @@ impl GoogleAuthApi {
 
         let refresh_token = get_refresh_token(
             &self.credentials.web, &token.token,
-        );
+        ).unwrap();
 
         token.token.access_token = refresh_token.access_token;
         token.token.expires_in = refresh_token.expires_in;
@@ -199,7 +200,7 @@ fn parse_query_str(qstr: String) -> HashMap<String, String> {
     query_params
 }
 
-fn get_token(credentials: &GoogleWebCredentials, code: GoogleAuthorizationCode) -> GoogleApiToken {
+fn get_token(credentials: &GoogleWebCredentials, code: GoogleAuthorizationCode) -> CustomResult<GoogleApiToken> {
     let token_request: HashMap<String, String> = build_auth_token_request(
         &credentials, &code
     );
@@ -214,7 +215,7 @@ struct RefreshToken {
     pub token_type: String
 }
 
-fn get_refresh_token(credentials: &GoogleWebCredentials, api_token: &GoogleApiToken) -> RefreshToken {
+fn get_refresh_token(credentials: &GoogleWebCredentials, api_token: &GoogleApiToken) -> CustomResult<RefreshToken> {
     let token_request: HashMap<String, String> = build_refresh_token_request(
         &credentials, &api_token
     );
@@ -248,7 +249,7 @@ fn build_refresh_token_request(credentials: &GoogleWebCredentials,
     refresh_request
 }
 
-fn reqwest_token<T>(token_uri: &String, token_request: HashMap<String, String>) -> T
+fn reqwest_token<T>(token_uri: &String, token_request: HashMap<String, String>) -> CustomResult<T>
     where T: DeserializeOwned
 {
     let client = reqwest::Client::new();
@@ -257,7 +258,7 @@ fn reqwest_token<T>(token_uri: &String, token_request: HashMap<String, String>) 
 
     client.post(token_uri.as_str())
         .json(&token_request)
-        .send().unwrap().json().unwrap()
+        .send()?.json()?
 }
 
 trait StorageLoader {
