@@ -18,6 +18,7 @@ use chrono::{DateTime, Utc};
 use serde::{de, Serialize, Deserialize, de::DeserializeOwned};
 use serde_json::{Value, Deserializer};
 use serde_json;
+use crate::error::CustomResult;
 
 pub struct KeyValueStore<T> {
     pub data: Box<HashMap<String, T>>,
@@ -47,8 +48,8 @@ impl<T> KeyValueStore<T>
 
     pub fn get_cloned(&self, key: &String) -> Option<T> {
         if let Some(item) = self.data.get(key) {
-            let ser = serde_json::to_string(&item).unwrap();
-            Some(serde_json::from_str(&ser.to_string()).unwrap())
+            let ser = serde_json::to_string(&item).expect("Could not convert item to json");
+            Some(serde_json::from_str(&ser.to_string()).expect("Could not convert json to item"))
         } else {
             None
         }
@@ -59,7 +60,7 @@ impl<T> KeyValueStore<T>
         let saved = self.data.insert(key.to_string(), t);
 
         if self.should_persist() {
-            self.persist();
+            self.persist().expect("Could not perist key value store");
             self.last_save_at = Utc::now();
         }
 
@@ -84,19 +85,23 @@ impl<T> KeyValueStore<T>
         results
     }
 
-    pub fn load(&mut self) {
+    pub fn load(&mut self) -> CustomResult<()> {
         let p = Path::new(&self.path);
         if p.exists() {
-            let data = fs::read_to_string(&self.path).unwrap();
-            self.data = serde_json::from_str(&data).unwrap();
+            let data = fs::read_to_string(&self.path)?;
+            self.data = serde_json::from_str(&data)?;
         }
 
         println!("loaded {} stored items", self.data.len());
+
+        Ok(())
     }
 
-    pub fn persist(&self) {
-        let serialized = serde_json::to_string_pretty(&self.data.as_ref()).unwrap();
+    pub fn persist(&self) -> CustomResult<()> {
+        let serialized = serde_json::to_string_pretty(&self.data.as_ref())?;
 
-        fs::write(&self.path, serialized).unwrap();
+        fs::write(&self.path, serialized)?;
+
+        Ok(())
     }
 }

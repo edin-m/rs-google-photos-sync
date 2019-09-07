@@ -23,8 +23,9 @@ use reqwest::{Response};
 use opener;
 
 use crate::util;
-use crate::error::CustomResult;
+use crate::error::{CustomResult, CustomError};
 use serde::export::fmt::Debug;
+use core::borrow::Borrow;
 
 const CALLBACK_URL: &'static str = "http://localhost:3001/oauth2redirect";
 
@@ -77,60 +78,57 @@ impl GoogleAuthApi {
         auth
     }
 
-    pub fn get_token(&mut self) -> GoogleToken {
-        self.normalize_token();
+    pub fn get_token(&mut self) -> CustomResult<GoogleToken> {
+        self.authenticate_or_renew()?;
 
-        self.token.clone().unwrap()
+        self.token.clone().ok_or(CustomError::Err("Could not clone token".to_string()))
     }
 
-    pub fn normalize_token(&mut self) {
-        match &self.token {
-            Some(token) => {
-                if token.is_expired() {
-                    println!("token expired, refreshing");
-                    self.renew_token();
-                }
-            }
-            None => {
-                println!("Token non existent; authenticate");
-                self.authenticate()
+    pub fn authenticate_or_renew(&mut self) -> CustomResult<GoogleToken> {
+        if self.token.is_none() {
+            let token = self.authenticate()?;
+            self.token = Some(token);
+        } else {
+            if self.token.as_ref().unwrap().is_expired() {
+                let token = self.renew_token()?;
+                self.token = Some(token);
             }
         }
+
+        Ok(self.token.clone().unwrap())
     }
 
-    fn authenticate(&mut self) {
+    fn authenticate(&self) -> CustomResult<GoogleToken> {
         let url = create_authorization_url(&self.credentials.web);
-        let code = get_authorization_code(url);
+        let code = get_authorization_code(url)?;
 
         println!("authorization code: {:#?}", code);
 
-        let token = get_token(&self.credentials.web, code).unwrap();
-        println!("token {:#?}", token);
+        let api_token = get_token(&self.credentials.web, code)?;
+        println!("token {:#?}", api_token);
 
-        let google_token = GoogleToken {
-            token,
+        let token = GoogleToken {
+            token: api_token,
             token_created_at: Utc::now()
         };
 
-        google_token.persist();
+        token.persist()?;
 
-        self.token = Some(google_token);
+        Ok(token)
     }
 
-    fn renew_token(&mut self) {
-        let mut token = self.token.take().unwrap();
+    fn renew_token(&self) -> CustomResult<GoogleToken> {
+        let mut token = self.token.clone().unwrap();
 
-        let refresh_token = get_refresh_token(
-            &self.credentials.web, &token.token,
-        ).unwrap();
+        let refresh_token = get_refresh_token(&self.credentials.web, &token.token)?;
 
         token.token.access_token = refresh_token.access_token;
         token.token.expires_in = refresh_token.expires_in;
         token.token_created_at = Utc::now();
 
-        token.persist();
+        token.persist()?;
 
-        self.token = Some(token);
+        Ok(token)
     }
 }
 
@@ -154,9 +152,9 @@ fn google_photos_api_read_only_scope() -> Vec<String> {
 #[derive(Debug)]
 struct GoogleAuthorizationCode(String);
 
-fn get_authorization_code(url: String) -> GoogleAuthorizationCode {
+fn get_authorization_code(url: String) -> CustomResult<GoogleAuthorizationCode> {
     // open a web page to authorize
-    opener::open(url).unwrap();
+    opener::open(url)?;
 
     // pull authorization
     let thread = thread::spawn(move || {
@@ -180,10 +178,11 @@ fn get_authorization_code(url: String) -> GoogleAuthorizationCode {
         params
     });
 
-    let item: HashMap<String, String> = thread.join().unwrap();
-    println!("thread result the code for access is: {}", item.get("code").unwrap());
+    let item: HashMap<String, String> = thread.join()?;
+    let code = item.get("code").unwrap();
+    println!("thread result the code for access is: {}", code);
 
-    GoogleAuthorizationCode(String::from(item.get("code").unwrap()))
+    Ok(GoogleAuthorizationCode(String::from(code)))
 }
 
 fn parse_query_str(qstr: String) -> HashMap<String, String> {
@@ -290,7 +289,7 @@ impl StorageLoader for GoogleCredentials {
         match credentials {
             Ok(c) => c,
             Err(e) => {
-                panic!("Error loading credentials file {}", e);
+                panic!("Error loading credentials file from secrets/credentials.json {}", e);
             }
         }
     }

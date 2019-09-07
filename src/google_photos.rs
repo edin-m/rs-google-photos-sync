@@ -26,6 +26,12 @@ use serde_json;
 use crate::{main, MediaItem, MediaItemId, MediaMetaData, Photo};
 use crate::error::{CustomError, CustomResult};
 use crate::google_api::GoogleToken;
+use crate::util;
+use core::borrow::Borrow;
+
+pub struct GooglePhotosApi {
+    pub token: GoogleToken
+}
 
 pub fn search(token: &GoogleToken, num_days_back: i32, limit_hint: usize)
               -> CustomResult<Vec<MediaItem>>
@@ -142,15 +148,16 @@ impl<T: TimeZone> From<DateTime<T>> for Date {
     }
 }
 
-pub fn batch_get(media_item_ids: &Vec<String>, google_token: &GoogleToken) -> Vec<MediaItem> {
-    let groups = split_into_groups(media_item_ids, 50);
+pub fn batch_get(media_item_ids: &Vec<String>, google_token: &GoogleToken) -> CustomResult<Vec<MediaItem>> {
+    const MAX_GOOGLE_BATCH_GET_SIZE: usize = 50;
 
+    let groups = util::split_into_groups(media_item_ids, MAX_GOOGLE_BATCH_GET_SIZE);
     println!("split {} items into {} groups", media_item_ids.len(), groups.len());
 
     let mut got = Vec::new();
 
     for group in groups {
-        let items = _batch_get(&group, google_token).unwrap();
+        let items = _batch_get(&group, google_token)?;
 
         println!("fetched {}", items.len());
 
@@ -159,7 +166,7 @@ pub fn batch_get(media_item_ids: &Vec<String>, google_token: &GoogleToken) -> Ve
         }
     }
 
-    got
+    Ok(got)
 }
 
 fn _batch_get(media_item_ids: &Vec<&String>, google_token: &GoogleToken) -> CustomResult<Vec<MediaItem>> {
@@ -201,7 +208,7 @@ struct MediaItemResult {
 pub fn download_files(media_items: &Vec<MediaItem>, google_token: &GoogleToken)
                       -> CustomResult<Vec<MediaItemId>>
 {
-    fs::create_dir_all("google/photos").unwrap();
+    fs::create_dir_all("google/photos")?;
 
     let group_size = 5;
     let mut pool = Pool::new(group_size);
@@ -220,7 +227,7 @@ pub fn download_files(media_items: &Vec<MediaItem>, google_token: &GoogleToken)
                     Ok(_) => tx.send(Some(item.id.to_owned())).unwrap(),
                     Err(e) => {
                         println!("Error downloading {:#?}", e);
-                        tx.send(None);
+                        tx.send(None).unwrap();
                     }
                 }
             });
@@ -237,11 +244,7 @@ pub fn download_files(media_items: &Vec<MediaItem>, google_token: &GoogleToken)
         })
         .collect::<Option<Vec<_>>>();
 
-    if vec.is_none() {
-        Ok(Vec::new())
-    } else {
-        Ok(vec.unwrap())
-    }
+    Ok(vec.or_else(|| Some(Vec::new())).unwrap())
 }
 
 fn download_file(media_item: &MediaItem) -> CustomResult<()>
@@ -249,7 +252,6 @@ fn download_file(media_item: &MediaItem) -> CustomResult<()>
     let url = create_download_url(media_item)?;
 
     let mut resp = reqwest::get(url.as_str())?;
-
     let path = Path::new("google/photos").join(&media_item.filename);
     let mut dest = File::create(path)?;
 
@@ -275,24 +277,3 @@ fn create_download_url(media_item: &MediaItem) -> CustomResult<String> {
     }
 }
 
-fn split_into_groups<T>(items: &Vec<T>, group_size: usize) -> Vec<Vec<&T>>
-{
-    let mut groups = Vec::new();
-
-    let num_groups = (items.len() as f32 / group_size as f32).ceil() as usize;
-
-    for i in 0..num_groups {
-        let mut vec = Vec::new();
-
-        let start = i * group_size;
-        let end = min(items.len(), i * group_size + group_size);
-
-        for j in start..end {
-            vec.push(items.get(j).unwrap());
-        }
-
-        groups.push(vec);
-    }
-
-    groups
-}

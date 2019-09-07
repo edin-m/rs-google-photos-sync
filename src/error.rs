@@ -67,3 +67,15 @@ impl From<reqwest::header::InvalidHeaderValue> for CustomError {
         CustomError::Err(format!("InvalidHeaderValue {}", e.to_string()))
     }
 }
+
+impl From<opener::OpenError> for CustomError {
+    fn from(e: opener::OpenError) -> Self {
+        CustomError::Err(format!("opener::OpenError {}", e.to_string()))
+    }
+}
+
+impl From<std::boxed::Box<dyn std::any::Any + std::marker::Send>> for CustomError {
+    fn from(e: std::boxed::Box<dyn std::any::Any + std::marker::Send>) -> Self {
+        CustomError::Err(format!("error joining thread"))
+    }
+}
