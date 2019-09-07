@@ -1,28 +1,24 @@
-use std::collections::HashMap;
-use std::fs::File;
-use std::io::copy;
-use std::option::Option;
-use std::string::ToString;
-use std::sync::mpsc;
-use std::vec::Vec;
-use std::{thread, time};
-use std::marker::Sync;
-use std::time::Duration;
-
-extern crate opener;
-#[macro_use]
-extern crate nickel;
-extern crate reqwest;
-#[macro_use]
-extern crate serde;
-#[macro_use]
-extern crate serde_json;
 extern crate chrono;
 extern crate commander;
+#[macro_use]
+extern crate nickel;
+extern crate opener;
+extern crate reqwest;
 extern crate scoped_threadpool;
+#[macro_use]
+extern crate serde;
+extern crate serde_json;
 
-use commander::Commander;
+use std::option::Option;
+use std::vec::Vec;
+
 use chrono::{DateTime, Utc};
+use commander::Commander;
+
+use crate::error::CustomResult;
+//use crate::google_api::GoogleAuthApi;
+use crate::google_photos::GooglePhotosApi;
+
 
 mod downloader;
 mod error;
@@ -30,11 +26,6 @@ mod google_api;
 mod google_photos;
 mod my_db;
 mod util;
-
-use crate::error::CustomResult;
-use crate::google_api::GoogleAuthApi;
-use crate::google_photos::{GooglePhotosApi};
-
 
 // =============
 
@@ -98,25 +89,23 @@ fn main() -> CustomResult<()> {
         println!("job name {}", job);
     }
 
-    let mut storage = StoredItemStore::new("secrets/photos.data");
+    let storage = StoredItemStore::new("secrets/photos.data");
     let mut google_auth = google_api::GoogleAuthApi::create();
     let token = google_auth.authenticate_or_renew()?;
-    let photos_api = GooglePhotosApi { token };
 
-    let mut app = App { google_auth, photos_api, storage };
+    let photos_api = GooglePhotosApi { token };
+    let mut app = App { photos_api, storage };
 
     if let Some(search_params) = command.get_list("search") {
         let days_back = search_params.get(0).unwrap().parse::<i32>()?;
         let limit_hint = search_params.get(1).unwrap().parse::<usize>()?;
         println!("search params {} {}", days_back, limit_hint);
         app.search(days_back, limit_hint)?;
-//        search_and_store_items(&mut google_auth, &mut storage, days_back, limit_hint);
 
     } else if let Some(download_params) = command.get_list("download") {
         let num_items = download_params.get(0).unwrap().parse::<i32>()?;
         println!("download params {}", num_items);
         app.download(num_items)?;
-//        download_files(num_items, &mut storage)?;
 
     } else {
 //        run_jobs();
@@ -126,110 +115,76 @@ fn main() -> CustomResult<()> {
 }
 
 struct App {
-    google_auth: GoogleAuthApi,
+//    google_auth: GoogleAuthApi,
     photos_api: GooglePhotosApi,
     storage: StoredItemStore
 }
 
 impl App {
     pub fn search(&mut self, num_days_back: i32, limit_hint: usize) -> CustomResult<()> {
-        let token = self.google_auth.get_token()?;
-        let media_items: Vec<MediaItem> = google_photos::search(&token, num_days_back, limit_hint)?;
+        let media_items = self.photos_api.search(num_days_back, limit_hint)?;
         println!("media items {}", media_items.len());
-        on_media_items(media_items, &mut self.storage);
+        self.on_media_items(media_items)?;
         Ok(())
     }
 
-    pub fn download(&mut self, num_items: i32) -> CustomResult<()> {
+    pub fn download(&mut self, _: i32) -> CustomResult<()> {
         let selected_stored_items = self.storage.select_files_for_download();
         println!("selected {} files to download", selected_stored_items.len());
-        let token = self.google_auth.get_token()?;
 
-        let media_item_ids = selected_stored_items.iter().map(|item| item.mediaItem.id.to_owned()).collect::<Vec<_>>();
+        let media_item_ids = extract_media_item_ids(&selected_stored_items);
 
-        let media_items = google_photos::batch_get(&media_item_ids, &token)?;
-        let downloaded_ids = google_photos::download_files(&media_items, &token)?;
-        mark_downloaded(&media_items, &mut self.storage);
-        on_media_items(media_items, &mut self.storage);
+        let media_items = self.photos_api.batch_get(&media_item_ids)?;
+        let _ = self.photos_api.download_files(&media_items)?;
+        self.storage.mark_downloaded(&media_items);
+        self.on_media_items(media_items)?;
         Ok(())
     }
-}
 
-fn search_and_store_items(google_auth: &mut GoogleAuthApi,
-                          storage: &mut StoredItemStore,
-                          num_days_back: i32,
-                          limit_hint: usize) -> CustomResult<()> {
-    let token = google_auth.get_token()?;
-    let media_items: Vec<MediaItem> = google_photos::search(&token, num_days_back, limit_hint)?;
-    println!("media items {}", media_items.len());
-    on_media_items(media_items, storage);
-    Ok(())
-}
+    fn on_media_items(&mut self, media_items: Vec<MediaItem>) -> CustomResult<()> {
+        for media_item in media_items {
+            let id = media_item.id.to_owned();
 
-fn on_media_items(media_items: Vec<MediaItem>, storage: &mut StoredItemStore) -> CustomResult<()> {
-    for media_item in media_items {
-        let id = media_item.id.to_owned();
-
-        if let Some(mut stored_item) = storage.get_cloned(&id) {
-            stored_item.mediaItem = media_item;
-            storage.set(&id, stored_item);
-        } else {
-            storage.set(
-                &id,
-                StoredItem {
-                    mediaItem: media_item,
-                    appData: None,
-                    alt_filename: None,
-                },
-            );
+            if let Some(mut stored_item) = self.storage.get_cloned(&id) {
+                stored_item.mediaItem = media_item;
+                self.storage.set(&id, stored_item);
+            } else {
+                self.storage.set(
+                    &id,
+                    StoredItem {
+                        mediaItem: media_item,
+                        appData: None,
+                        alt_filename: None,
+                    },
+                );
+            }
         }
+
+        self.fix_duplicate_filenames();
+
+        self.storage.persist()?;
+
+        Ok(())
     }
 
-    //    fix_duplicate_filenames(&storage);
-
-    storage.persist()?;
-
-    Ok(())
+    fn fix_duplicate_filenames(&mut self) {
+        println!("fix_duplicate_filenames not implemented!")
+    }
 }
 
-fn fix_duplicate_filenames(storage: &StoredItemStore) {}
-
-fn download_files(num_items: i32, storage: &mut StoredItemStore) -> CustomResult<()> {
-//    let stored_items = storage.select_files_for_download();
-//    println!("selected {} files to download", stored_items.len());
-//
-//    let ids = stored_items
-//        .iter()
-//        .map(|item| item.mediaItem.id.to_owned())
-//        .collect::<Vec<_>>();
-//
-//    let mut google_auth = google_api::GoogleAuthApi::create();
-//    let token = google_auth.get_token()?;
-//
-//    let media_items = google_photos::batch_get(&ids, &token)?;
-//
-//    println!("batch get received {}", media_items.len());
-//
-//    let downloaded_ids = google_photos::download_files(&media_items, &token)?;
-//
-//    mark_downloaded(&media_items, storage);
-//
-//    on_media_items(media_items, storage);
-
-    Ok(())
-}
-
-trait Selector {
+trait AppStorage {
     fn select_files_for_download(&self) -> Vec<StoredItem>;
+
+    fn mark_downloaded(&mut self, media_items: &Vec<MediaItem>);
 }
 
-impl Selector for StoredItemStore {
+impl AppStorage for StoredItemStore {
     fn select_files_for_download(&self) -> Vec<StoredItem> {
-        self.filter_values(|(k, v)| {
+        self.filter_values(|(_, v)| {
             let mut result = true;
 
             if let Some(app_data) = &v.appData {
-                if let Some(download_info) = &app_data.download_info {
+                if let Some(_) = &app_data.download_info {
                     result = false;
                 } else {
                     result = true;
@@ -239,25 +194,27 @@ impl Selector for StoredItemStore {
             result
         })
     }
-}
 
-fn mark_downloaded(media_items: &Vec<MediaItem>, storage: &mut StoredItemStore) {
-    let ids = media_items
-        .iter()
-        .map(|item| item.id.to_owned())
-        .collect::<Vec<_>>();
+    fn mark_downloaded(&mut self, media_items: &Vec<MediaItem>) {
+        let ids = media_items
+            .iter()
+            .map(|item| item.id.to_owned())
+            .collect::<Vec<_>>();
 
-    for id in ids {
-        if let Some(mut stored_item) = storage.get_cloned(&id) {
-            let app_data = AppData {
-                download_info: Some(DownloadInfo {
-                    downloaded_at: Utc::now()
-                })
-            };
-            stored_item.appData = Some(app_data);
-            storage.set(&id, stored_item);
+        for id in ids {
+            if let Some(mut stored_item) = self.get_cloned(&id) {
+                let app_data = AppData {
+                    download_info: Some(DownloadInfo {
+                        downloaded_at: Utc::now()
+                    })
+                };
+                stored_item.appData = Some(app_data);
+                self.set(&id, stored_item);
+            }
         }
     }
 }
 
-
+fn extract_media_item_ids(stored_items: &Vec<StoredItem>) -> Vec<MediaItemId> {
+    stored_items.iter().map(|stored_item| stored_item.mediaItem.id.to_owned()).collect::<Vec<_>>()
+}

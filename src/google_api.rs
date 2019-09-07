@@ -1,11 +1,8 @@
-use std::result;
 use std::time;
-use std::time::{Instant};
 use std::fs::File;
-use std::io::{BufReader, Write};
+use std::io::{Write};
 use std::option::Option;
 use std::clone::Clone;
-use std::ops::Add;
 use std::thread;
 use std::sync::mpsc;
 use std::collections::HashMap;
@@ -13,19 +10,14 @@ use std::collections::HashMap;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json;
 
-use chrono::{DateTime, Utc, Duration};
+use chrono::{DateTime, Utc};
 
-use nickel::{Nickel, Mountable, Request, ListeningServer,
-             HttpRouter, hyper::Url};
-
-use reqwest::{Response};
+use nickel::{Nickel, HttpRouter, hyper::Url};
 
 use opener;
 
 use crate::util;
-use crate::error::{CustomResult, CustomError};
-use serde::export::fmt::Debug;
-use core::borrow::Borrow;
+use crate::error::{CustomResult};
 
 const CALLBACK_URL: &'static str = "http://localhost:3001/oauth2redirect";
 
@@ -78,11 +70,11 @@ impl GoogleAuthApi {
         auth
     }
 
-    pub fn get_token(&mut self) -> CustomResult<GoogleToken> {
-        self.authenticate_or_renew()?;
-
-        self.token.clone().ok_or(CustomError::Err("Could not clone token".to_string()))
-    }
+//    pub fn get_token(&mut self) -> CustomResult<GoogleToken> {
+//        self.authenticate_or_renew()?;
+//
+//        self.token.clone().ok_or(CustomError::Err("Could not clone token".to_string()))
+//    }
 
     pub fn authenticate_or_renew(&mut self) -> CustomResult<GoogleToken> {
         if self.token.is_none() {

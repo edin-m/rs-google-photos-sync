@@ -1,7 +1,6 @@
 use std::error::Error;
 use std::fmt;
 use std::io;
-use std::net;
 use std::convert::From;
 
 use reqwest;
@@ -23,7 +22,7 @@ impl Error for CustomError {
         }
     }
 
-    fn cause(&self) -> Option<&Error> {
+    fn cause(&self) -> Option<&dyn Error> {
         match *self {
             CustomError::Err(_) => None
         }
@@ -75,7 +74,7 @@ impl From<opener::OpenError> for CustomError {
 }
 
 impl From<std::boxed::Box<dyn std::any::Any + std::marker::Send>> for CustomError {
-    fn from(e: std::boxed::Box<dyn std::any::Any + std::marker::Send>) -> Self {
+    fn from(_: std::boxed::Box<dyn std::any::Any + std::marker::Send>) -> Self {
         CustomError::Err(format!("error joining thread"))
     }
 }

@@ -1,39 +1,42 @@
 use std::clone::Clone;
-use std::cmp::min;
-use std::collections::HashMap;
 use std::convert::{From, Into};
 use std::fs;
 use std::fs::File;
-use std::io::{BufReader, copy, Write};
-use std::marker::Copy;
-use std::ops::Add;
+use std::io::{copy};
 use std::option::Option;
 use std::path::Path;
-use std::result;
-use std::sync::{Arc, mpsc};
-use std::sync::mpsc::channel;
-use std::thread;
-use std::time;
-use std::time::Instant;
+use std::sync::{mpsc};
 
-use chrono::{Datelike, DateTime, Duration, FixedOffset, TimeZone, Utc};
-use reqwest::{Client, ClientBuilder, header::HeaderMap, header::HeaderValue, Response};
+use chrono::{Datelike, DateTime, Duration, TimeZone, Utc};
+use reqwest::{ClientBuilder, header::HeaderMap, header::HeaderValue};
 use reqwest::header;
 use scoped_threadpool::Pool;
-use serde::{de::DeserializeOwned, Deserialize, Serialize};
-use serde_json;
+use serde::{Deserialize, Serialize};
 
-use crate::{main, MediaItem, MediaItemId, MediaMetaData, Photo};
+use crate::{MediaItem, MediaItemId};
 use crate::error::{CustomError, CustomResult};
 use crate::google_api::GoogleToken;
 use crate::util;
-use core::borrow::Borrow;
 
 pub struct GooglePhotosApi {
     pub token: GoogleToken
 }
 
-pub fn search(token: &GoogleToken, num_days_back: i32, limit_hint: usize)
+impl GooglePhotosApi {
+    pub fn search(&self, num_days_back: i32, limit_hint: usize) -> CustomResult<Vec<MediaItem>> {
+        search(&self.token, num_days_back, limit_hint)
+    }
+
+    pub fn batch_get(&self, media_item_ids: &Vec<String>) -> CustomResult<Vec<MediaItem>> {
+        batch_get(media_item_ids, &self.token)
+    }
+
+    pub fn download_files(&self, media_items: &Vec<MediaItem>) -> CustomResult<Vec<MediaItemId>> {
+        download_files(media_items)
+    }
+}
+
+fn search(token: &GoogleToken, num_days_back: i32, limit_hint: usize)
               -> CustomResult<Vec<MediaItem>>
 {
     let mut headers = HeaderMap::new();
@@ -148,7 +151,7 @@ impl<T: TimeZone> From<DateTime<T>> for Date {
     }
 }
 
-pub fn batch_get(media_item_ids: &Vec<String>, google_token: &GoogleToken) -> CustomResult<Vec<MediaItem>> {
+fn batch_get(media_item_ids: &Vec<String>, google_token: &GoogleToken) -> CustomResult<Vec<MediaItem>> {
     const MAX_GOOGLE_BATCH_GET_SIZE: usize = 50;
 
     let groups = util::split_into_groups(media_item_ids, MAX_GOOGLE_BATCH_GET_SIZE);
@@ -205,8 +208,7 @@ struct MediaItemResult {
     pub mediaItem: MediaItem,
 }
 
-pub fn download_files(media_items: &Vec<MediaItem>, google_token: &GoogleToken)
-                      -> CustomResult<Vec<MediaItemId>>
+fn download_files(media_items: &Vec<MediaItem>) -> CustomResult<Vec<MediaItemId>>
 {
     fs::create_dir_all("google/photos")?;
 
@@ -255,7 +257,7 @@ fn download_file(media_item: &MediaItem) -> CustomResult<()>
     let path = Path::new("google/photos").join(&media_item.filename);
     let mut dest = File::create(path)?;
 
-    let result = copy(&mut resp, &mut dest)?;
+    let _ = copy(&mut resp, &mut dest)?;
 
     Ok(())
 }
@@ -263,7 +265,7 @@ fn download_file(media_item: &MediaItem) -> CustomResult<()>
 fn create_download_url(media_item: &MediaItem) -> CustomResult<String> {
     let mut url = String::new();
 
-    if let Some(photo) = &media_item.mediaMetadata.photo {
+    if let Some(_) = &media_item.mediaMetadata.photo {
         url = url + format!(
             "{}=w{}-h{}",
             media_item.baseUrl,

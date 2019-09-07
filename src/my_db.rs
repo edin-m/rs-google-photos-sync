@@ -1,29 +1,18 @@
-use std::fs;
-use std::collections::HashMap;
-use std::result::Result;
-use std::cmp::Eq;
-use std::hash::Hash;
-use std::marker::Copy;
-use std::clone::Clone;
-use std::fmt::Debug;
 use std::boxed::Box;
+use std::collections::HashMap;
+use std::fs;
 use std::path::Path;
-use std::fs::File;
-use std::io::Write;
-use std::collections::hash_map::Iter;
-use std::iter::Filter;
 
 use chrono::{DateTime, Utc};
-
-use serde::{de, Serialize, Deserialize, de::DeserializeOwned};
-use serde_json::{Value, Deserializer};
+use serde::{de::DeserializeOwned, Serialize};
 use serde_json;
+
 use crate::error::CustomResult;
 
 pub struct KeyValueStore<T> {
     pub data: Box<HashMap<String, T>>,
     pub path: String,
-    pub last_save_at: DateTime<Utc>
+    pub last_save_at: DateTime<Utc>,
 }
 
 impl<T> KeyValueStore<T>
@@ -33,17 +22,17 @@ impl<T> KeyValueStore<T>
         let mut store = KeyValueStore {
             data: Box::new(HashMap::new()),
             path: path.to_string(),
-            last_save_at: Utc::now()
+            last_save_at: Utc::now(),
         };
 
-        store.load();
+        store.load().expect("Error loading key value store");
 
         store
     }
 
     pub fn get(&self, key: &String) -> Option<&T>
     {
-        self.data.get(key)
+        self.data.get(key) 
     }
 
     pub fn get_cloned(&self, key: &String) -> Option<T> {
@@ -76,7 +65,7 @@ impl<T> KeyValueStore<T>
     {
         let mut results = Vec::<T>::new();
 
-        for (k, v) in self.data.iter().filter(filter_fn) {
+        for (k, _) in self.data.iter().filter(filter_fn) {
             if let Some(cloned) = self.get_cloned(k) {
                 results.push(cloned);
             }
