@@ -1,19 +1,13 @@
-use std::clone::Clone;
 use std::convert::{From, Into};
-use std::fs;
-use std::fs::File;
-use std::io::{copy};
 use std::option::Option;
-use std::path::Path;
-use std::sync::{mpsc};
 
 use chrono::{Datelike, DateTime, Duration, TimeZone, Utc};
 use reqwest::{ClientBuilder, header::HeaderMap, header::HeaderValue};
 use reqwest::header;
-use scoped_threadpool::Pool;
 use serde::{Deserialize, Serialize};
 
-use crate::{MediaItem, MediaItemId};
+use crate::{MediaItem};
+use crate::downloader::DownloadUrl;
 use crate::error::{CustomError, CustomResult};
 use crate::google_api::GoogleToken;
 use crate::util;
@@ -29,10 +23,6 @@ impl GooglePhotosApi {
 
     pub fn batch_get(&self, media_item_ids: &Vec<String>) -> CustomResult<Vec<MediaItem>> {
         batch_get(media_item_ids, &self.token)
-    }
-
-    pub fn download_files(&self, media_items: &Vec<MediaItem>) -> CustomResult<Vec<MediaItemId>> {
-        download_files(media_items)
     }
 }
 
@@ -208,74 +198,22 @@ struct MediaItemResult {
     pub mediaItem: MediaItem,
 }
 
-fn download_files(media_items: &Vec<MediaItem>) -> CustomResult<Vec<MediaItemId>>
-{
-    fs::create_dir_all("google/photos")?;
+impl DownloadUrl for MediaItem {
+    fn create_download_url(&self) -> CustomResult<String> {
+        let mut url = String::new();
 
-    let group_size = 5;
-    let mut pool = Pool::new(group_size);
-
-    let (tx, rx) = mpsc::channel();
-
-    pool.scoped(|scoped| {
-        for item in media_items {
-            let tx = tx.clone();
-            scoped.execute(move || {
-                println!("downloading {}", item.filename);
-
-                let res = download_file(&item);
-
-                match res {
-                    Ok(_) => tx.send(Some(item.id.to_owned())).unwrap(),
-                    Err(e) => {
-                        println!("Error downloading {:#?}", e);
-                        tx.send(None).unwrap();
-                    }
-                }
-            });
+        if let Some(_) = &self.mediaMetadata.photo {
+            url = url + format!(
+                "{}=w{}-h{}",
+                &self.baseUrl,
+                &self.mediaMetadata.width,
+                &self.mediaMetadata.height
+            ).as_str();
+            Ok(url)
+        } else {
+            println!("video not supported {}", self.id);
+            Err(CustomError::Err("video not supported".to_string()))
         }
-    });
-
-    let vec = rx.into_iter()
-        .take(media_items.len())
-        .filter(|value| {
-            match value {
-                Some(_) => true,
-                None => false
-            }
-        })
-        .collect::<Option<Vec<_>>>();
-
-    Ok(vec.or_else(|| Some(Vec::new())).unwrap())
-}
-
-fn download_file(media_item: &MediaItem) -> CustomResult<()>
-{
-    let url = create_download_url(media_item)?;
-
-    let mut resp = reqwest::get(url.as_str())?;
-    let path = Path::new("google/photos").join(&media_item.filename);
-    let mut dest = File::create(path)?;
-
-    let _ = copy(&mut resp, &mut dest)?;
-
-    Ok(())
-}
-
-fn create_download_url(media_item: &MediaItem) -> CustomResult<String> {
-    let mut url = String::new();
-
-    if let Some(_) = &media_item.mediaMetadata.photo {
-        url = url + format!(
-            "{}=w{}-h{}",
-            media_item.baseUrl,
-            media_item.mediaMetadata.width,
-            media_item.mediaMetadata.height
-        ).as_str();
-        Ok(url)
-    } else {
-        println!("video not supported");
-        Err(CustomError::Err("video not supported".to_string()))
     }
 }
 

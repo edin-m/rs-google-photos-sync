@@ -32,7 +32,7 @@ impl<T> KeyValueStore<T>
 
     pub fn get(&self, key: &String) -> Option<&T>
     {
-        self.data.get(key) 
+        self.data.get(key)
     }
 
     pub fn get_cloned(&self, key: &String) -> Option<T> {
@@ -60,14 +60,23 @@ impl<T> KeyValueStore<T>
         Utc::now().signed_duration_since(self.last_save_at).num_milliseconds() > 5000
     }
 
-    pub fn filter_values<F>(&self, filter_fn: F) -> Vec<T>
+    pub fn filter_values<F>(&self, filter_fn: F, limit: Option<usize>) -> Vec<T>
         where F: Fn(&(&String, &T)) -> bool
     {
         let mut results = Vec::<T>::new();
 
+        let mut counter = 0;
+        let max_items = if limit.is_some() { limit.unwrap() } else { self.data.len() };
+
         for (k, _) in self.data.iter().filter(filter_fn) {
             if let Some(cloned) = self.get_cloned(k) {
                 results.push(cloned);
+            }
+
+            counter += 1;
+
+            if counter >= max_items {
+                break;
             }
         }
 

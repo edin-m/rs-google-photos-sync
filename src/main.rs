@@ -10,15 +10,19 @@ extern crate serde;
 extern crate serde_json;
 
 use std::option::Option;
+use std::sync::mpsc;
+use std::sync::mpsc::{Receiver, Sender};
+use std::thread;
+use std::time::Duration;
 use std::vec::Vec;
 
 use chrono::{DateTime, Utc};
 use commander::Commander;
+use job_scheduler::{Job, JobScheduler};
 
 use crate::error::CustomResult;
-//use crate::google_api::GoogleAuthApi;
+use crate::google_api::GoogleAuthApi;
 use crate::google_photos::GooglePhotosApi;
-
 
 mod downloader;
 mod error;
@@ -35,6 +39,16 @@ pub struct StoredItem {
     pub mediaItem: MediaItem,
     pub appData: Option<AppData>,
     pub alt_filename: Option<String>,
+}
+
+impl StoredItem {
+    pub fn get_filename(&self) -> String {
+        if let Some(alt_filename) = &self.alt_filename {
+            alt_filename.to_owned()
+        } else {
+            self.mediaItem.filename.to_owned()
+        }
+    }
 }
 
 pub type MediaItemId = String;
@@ -85,8 +99,24 @@ fn main() -> CustomResult<()> {
         .option_list("-d, --download", "Download media items", None)
         .parse_env_or_exit();
 
-    if let Some(job) = command.get_str("job") {
-        println!("job name {}", job);
+    let (tx, rx) = mpsc::channel();
+
+    if let Some(search_params) = command.get_list("search") {
+        let days_back = search_params.get(0).unwrap().parse::<i32>()?;
+        let limit_hint = search_params.get(1).unwrap().parse::<usize>()?;
+        println!("search params {} {}", days_back, limit_hint);
+
+        tx.send(JobTask::SearchFilesTask(days_back, limit_hint)).unwrap();
+        drop(tx);
+
+    } else if let Some(download_params) = command.get_list("download") {
+        let num_items = download_params.get(0).unwrap().parse::<i32>()?;
+        println!("download params {}", num_items);
+
+        tx.send(JobTask::DownloadFilesTask(num_items)).unwrap();
+        drop(tx);
+    } else {
+        run_job_scheduler(tx.clone());
     }
 
     let storage = StoredItemStore::new("secrets/photos.data");
@@ -94,30 +124,20 @@ fn main() -> CustomResult<()> {
     let token = google_auth.authenticate_or_renew()?;
 
     let photos_api = GooglePhotosApi { token };
-    let mut app = App { photos_api, storage };
 
-    if let Some(search_params) = command.get_list("search") {
-        let days_back = search_params.get(0).unwrap().parse::<i32>()?;
-        let limit_hint = search_params.get(1).unwrap().parse::<usize>()?;
-        println!("search params {} {}", days_back, limit_hint);
-        app.search(days_back, limit_hint)?;
-
-    } else if let Some(download_params) = command.get_list("download") {
-        let num_items = download_params.get(0).unwrap().parse::<i32>()?;
-        println!("download params {}", num_items);
-        app.download(num_items)?;
-
-    } else {
-//        run_jobs();
-    }
+    run_task_receiver(&rx, App {
+            google_auth,
+            photos_api,
+            storage
+        });
 
     Ok(())
 }
 
 struct App {
-//    google_auth: GoogleAuthApi,
-    photos_api: GooglePhotosApi,
-    storage: StoredItemStore
+    pub google_auth: GoogleAuthApi,
+    pub photos_api: GooglePhotosApi,
+    pub storage: StoredItemStore
 }
 
 impl App {
@@ -128,16 +148,27 @@ impl App {
         Ok(())
     }
 
-    pub fn download(&mut self, _: i32) -> CustomResult<()> {
-        let selected_stored_items = self.storage.select_files_for_download();
-        println!("selected {} files to download", selected_stored_items.len());
+    pub fn download(&mut self, num_files: i32) -> CustomResult<()> {
+        let selected_stored_items = self.storage.select_files_for_download(num_files);
+        let selected_ids = extract_media_item_ids(&selected_stored_items);
 
-        let media_item_ids = extract_media_item_ids(&selected_stored_items);
+        let updated_media_items =
+            self.photos_api.batch_get(&selected_ids)?;
 
-        let media_items = self.photos_api.batch_get(&media_item_ids)?;
-        let _ = self.photos_api.download_files(&media_items)?;
-        self.storage.mark_downloaded(&media_items);
-        self.on_media_items(media_items)?;
+        let updated_ids = extract_media_item_ids(&updated_media_items);
+
+        self.on_media_items(updated_media_items)?;
+
+        let mut stored_items = Vec::new();
+
+        for id in updated_ids {
+            if let Some(a) = self.storage.get_cloned(&id) {
+                stored_items.push(a);
+            }
+        }
+
+        downloader::download(&stored_items)?;
+
         Ok(())
     }
 
@@ -168,18 +199,24 @@ impl App {
     }
 
     fn fix_duplicate_filenames(&mut self) {
-        println!("fix_duplicate_filenames not implemented!")
+        println!("fix_duplicate_filenames not implemented!");
+    }
+
+    pub fn refresh_token(&mut self) -> CustomResult<()> {
+        self.google_auth.authenticate_or_renew()?;
+
+        Ok(())
     }
 }
 
 trait AppStorage {
-    fn select_files_for_download(&self) -> Vec<StoredItem>;
+    fn select_files_for_download(&self, limit: i32) -> Vec<StoredItem>;
 
     fn mark_downloaded(&mut self, media_items: &Vec<MediaItem>);
 }
 
 impl AppStorage for StoredItemStore {
-    fn select_files_for_download(&self) -> Vec<StoredItem> {
+    fn select_files_for_download(&self, limit: i32) -> Vec<StoredItem> {
         self.filter_values(|(_, v)| {
             let mut result = true;
 
@@ -192,7 +229,7 @@ impl AppStorage for StoredItemStore {
             }
 
             result
-        })
+        }, Some(limit as usize))
     }
 
     fn mark_downloaded(&mut self, media_items: &Vec<MediaItem>) {
@@ -215,6 +252,65 @@ impl AppStorage for StoredItemStore {
     }
 }
 
-fn extract_media_item_ids(stored_items: &Vec<StoredItem>) -> Vec<MediaItemId> {
-    stored_items.iter().map(|stored_item| stored_item.mediaItem.id.to_owned()).collect::<Vec<_>>()
+trait HasMediaItemId {
+    fn get_media_item_id(&self) -> MediaItemId;
+}
+
+fn extract_media_item_ids<T>(items: &Vec<T>) -> Vec<MediaItemId>
+    where T: HasMediaItemId
+{
+    items.iter().map(|item| item.get_media_item_id()).collect::<Vec<_>>()
+}
+
+impl HasMediaItemId for MediaItem {
+    fn get_media_item_id(&self) -> MediaItemId {
+        self.id.to_owned()
+    }
+}
+
+impl HasMediaItemId for StoredItem {
+    fn get_media_item_id(&self) -> MediaItemId {
+        self.mediaItem.id.to_owned()
+    }
+}
+
+enum JobTask {
+    RefreshTokenTask,
+    DownloadFilesTask(i32),
+    SearchFilesTask(i32, usize)
+}
+
+fn run_job_scheduler(tx: Sender<JobTask>) {
+    thread::spawn(move || {
+        let mut sched = JobScheduler::new();
+
+        sched.add(Job::new("1/5 * * * * *".parse().unwrap(), || {
+            tx.send(JobTask::RefreshTokenTask).unwrap();
+        }));
+
+        loop {
+            sched.tick();
+
+            std::thread::sleep(Duration::from_millis(500));
+        }
+    });
+}
+
+fn run_task_receiver(rx: &Receiver<JobTask>, mut app: App) {
+    for r in rx {
+        match r {
+            JobTask::RefreshTokenTask => {
+                println!("RefreshTokenTask");
+                app.refresh_token().unwrap();
+            },
+            JobTask::DownloadFilesTask(num_files) => {
+                println!("DownloadFilesTask");
+                app.download(num_files).unwrap();
+            },
+            JobTask::SearchFilesTask(num_days_back, limit_hint) => {
+                println!("SearchFilesTask");
+                app.search(num_days_back, limit_hint).unwrap();
+            }
+        }
+    }
 }
