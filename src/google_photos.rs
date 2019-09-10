@@ -54,6 +54,8 @@ fn search(token: &GoogleToken, num_days_back: i32, limit_hint: usize)
             filters: search_filter,
         };
 
+        println!("{}", serde_json::to_string_pretty(&search_request).unwrap());
+
         let mut resp: SearchResponse = client
             .post("https://photoslibrary.googleapis.com/v1/mediaItems:search")
             .json(&search_request).send()?.json()?;

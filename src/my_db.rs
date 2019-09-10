@@ -30,6 +30,16 @@ impl<T> KeyValueStore<T>
         store
     }
 
+    pub fn get_all(&self) -> Vec<&T> {
+        let mut vec: Vec<&T> = Vec::new();
+
+        for v in self.data.values() {
+            vec.push(v);
+        }
+
+        vec
+    }
+
     pub fn get(&self, key: &String) -> Option<&T>
     {
         self.data.get(key)
@@ -71,9 +81,8 @@ impl<T> KeyValueStore<T>
         for (k, _) in self.data.iter().filter(filter_fn) {
             if let Some(cloned) = self.get_cloned(k) {
                 results.push(cloned);
+                counter += 1;
             }
-
-            counter += 1;
 
             if counter >= max_items {
                 break;

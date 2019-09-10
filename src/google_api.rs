@@ -70,6 +70,12 @@ impl GoogleAuthApi {
         auth
     }
 
+//    pub fn get_token(&mut self) -> CustomResult<GoogleToken> {
+//        self.authenticate_or_renew()?;
+//
+//        self.token.clone().ok_or(CustomError::Err("Could not clone token".to_string()))
+//    }
+
     pub fn authenticate_or_renew(&mut self) -> CustomResult<GoogleToken> {
         if self.token.is_none() {
             let token = self.authenticate()?;
