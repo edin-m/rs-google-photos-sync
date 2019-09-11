@@ -68,8 +68,8 @@ pub struct MediaItem {
 #[allow(non_snake_case)]
 pub struct MediaMetaData {
     pub creationTime: DateTime<Utc>,
-    pub width: String,
-    pub height: String,
+    pub width: Option<String>,
+    pub height: Option<String>,
     pub photo: Option<Photo>,
     pub video: Option<Video>,
 }
@@ -241,15 +241,17 @@ impl App {
         println!("Found {} duplicate files", dup_size * 2);
 
         for (_, v) in map {
-            let mut i = 0;
-            while i < v.len() {
-                let id = v.get(i).unwrap();
-                if let Some(mut item) = self.storage.get_cloned(&id) {
-                    item.alt_filename = Some(format!("{}_{}", i, item.get_filename()));
-                    self.storage.set(&item.get_media_item_id(), item);
-                }
+            if v.len() > 1 {
+                let mut i = 0;
+                while i < v.len() {
+                    let id = v.get(i).unwrap();
+                    if let Some(mut item) = self.storage.get_cloned(&id) {
+                        item.alt_filename = Some(format!("{}_{}", i, item.get_filename()));
+                        self.storage.set(&item.get_media_item_id(), item);
+                    }
 
-                i += 1;
+                    i += 1;
+                }
             }
         }
     }

@@ -54,8 +54,6 @@ fn search(token: &GoogleToken, num_days_back: i32, limit_hint: usize)
             filters: search_filter,
         };
 
-        println!("{}", serde_json::to_string_pretty(&search_request).unwrap());
-
         let mut resp: SearchResponse = client
             .post("https://photoslibrary.googleapis.com/v1/mediaItems:search")
             .json(&search_request).send()?.json()?;
@@ -205,12 +203,10 @@ impl DownloadUrl for MediaItem {
         let mut url = String::new();
 
         if let Some(_) = &self.mediaMetadata.photo {
-            url = url + format!(
-                "{}=w{}-h{}",
-                &self.baseUrl,
-                &self.mediaMetadata.width,
-                &self.mediaMetadata.height
-            ).as_str();
+            let meta = &self.mediaMetadata;
+            let w = if meta.width.is_some() { meta.width.as_ref().unwrap() } else { "" };
+            let h = if meta.height.is_some() { meta.height.as_ref().unwrap() } else { "" };
+            url = url + format!("{}=w{}-h{}", &self.baseUrl, w, h).as_str();
             Ok(url)
         } else {
             println!("video not supported {}", self.id);
@@ -218,4 +214,3 @@ impl DownloadUrl for MediaItem {
         }
     }
 }
-
