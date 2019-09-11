@@ -157,6 +157,26 @@ impl App {
     }
 
     pub fn download(&mut self, num_files: i32) -> CustomResult<()> {
+        const NUMBER_OF_FILES_PER_BATCH: i32 = 50;
+
+        let groups = num_files / NUMBER_OF_FILES_PER_BATCH;
+        let remainder = num_files % NUMBER_OF_FILES_PER_BATCH;
+
+        for i in 0..groups {
+            println!("Split num of files {}x{}+{}, group {}",
+                     groups, NUMBER_OF_FILES_PER_BATCH, remainder, i
+            );
+            let _ = self._fine_grade_download(NUMBER_OF_FILES_PER_BATCH)?;
+        }
+
+        if remainder > 0 {
+            self._fine_grade_download(remainder);
+        }
+
+        Ok(())
+    }
+
+    fn _fine_grade_download(&mut self, num_files: i32) -> CustomResult<()> {
         let selected_stored_items = self.storage.select_files_for_download(num_files);
         let selected_ids = extract_media_item_ids(&selected_stored_items);
 
@@ -338,15 +358,15 @@ fn run_job_scheduler(tx: Sender<JobTask>) {
 
         let download_files = 10;
 
-        sched.add(Job::new("1/30 * * * * *".parse().unwrap(), || {
+        sched.add(Job::new("0/30 * * * * *".parse().unwrap(), || {
             tx.send(JobTask::RefreshTokenTask).unwrap();
         }));
 
-        sched.add(Job::new("* 5 * * * *".parse().unwrap(), || {
+        sched.add(Job::new("0 0/20 * * * *".parse().unwrap(), || {
             tx.send(JobTask::SearchFilesTask(search_days_back, search_limit)).unwrap();
         }));
 
-        sched.add(Job::new("* 1 * * * *".parse().unwrap(), || {
+        sched.add(Job::new("0 0/5 * * * *".parse().unwrap(), || {
             tx.send(JobTask::DownloadFilesTask(download_files)).unwrap();
         }));
 

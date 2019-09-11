@@ -2,7 +2,7 @@ use std::convert::{From, Into};
 use std::option::Option;
 
 use chrono::{Datelike, DateTime, Duration, TimeZone, Utc};
-use reqwest::{ClientBuilder, header::HeaderMap, header::HeaderValue};
+use reqwest::{ClientBuilder, header::HeaderMap, header::HeaderValue, Client};
 use reqwest::header;
 use serde::{Deserialize, Serialize};
 
@@ -42,40 +42,56 @@ fn search(token: &GoogleToken, num_days_back: i32, limit_hint: usize)
     let mut page_token: Option<String> = None;
 
     while media_items.len() < limit_hint {
-        let range = DateRange::range_from_days(num_days_back);
-        let search_filter = SearchFilter {
-            dateFilter: range.into(),
-            includeArchivedMedia: true,
-        };
+        let resp = make_search_reqwest(&client, &page_token, num_days_back)?;
+        let mut resp_media_items = resp.mediaItems.or(Some(Vec::new())).unwrap();
+        println!("search result {} items {}/{}", resp_media_items.len(), media_items.len(), limit_hint);
 
-        let search_request = SearchRequest {
-            pageSize: 100,
-            pageToken: page_token,
-            filters: search_filter,
-        };
-
-        let mut resp: SearchResponse = client
-            .post("https://photoslibrary.googleapis.com/v1/mediaItems:search")
-            .json(&search_request).send()?.json()?;
-
-        println!("search result {} items", resp.mediaItems.len());
+        media_items.append(&mut resp_media_items);
 
         if let Some(next_page_token) = resp.nextPageToken {
             page_token = Some(next_page_token.to_owned());
         } else {
-            page_token = None
+            break;
         }
-
-        media_items.append(&mut resp.mediaItems);
     }
 
     Ok(media_items)
 }
 
+fn make_search_reqwest(client: &Client, page_token: &Option<String>, days_back: i32) -> CustomResult<SearchResponse> {
+    let range = DateRange::range_from_days(days_back);
+    let search_filter = SearchFilter {
+        dateFilter: range.into(),
+        includeArchivedMedia: true,
+    };
+
+    let search_request = SearchRequest {
+        pageSize: 100,
+        pageToken: if page_token.is_some() { Some(page_token.as_ref().unwrap().to_owned()) } else { None },
+        filters: search_filter,
+    };
+
+//    println!("{}", serde_json::to_string_pretty(&search_request).unwrap());
+
+    let mut resp = client
+        .post("https://photoslibrary.googleapis.com/v1/mediaItems:search")
+        .json(&search_request).send()?;
+
+    let out = resp.json();
+
+    match out {
+        Ok(value) => Ok(value),
+        Err(err) => {
+            println!("Error parsing output {} {}", err, resp.text().unwrap());
+            Err(CustomError::Err("parsing err".to_owned()))
+        }
+    }
+}
+
 #[derive(Deserialize, Debug)]
 #[allow(non_snake_case)]
 struct SearchResponse {
-    mediaItems: Vec<MediaItem>,
+    mediaItems: Option<Vec<MediaItem>>,
     nextPageToken: Option<String>,
 }
 
@@ -209,6 +225,7 @@ impl DownloadUrl for MediaItem {
             url = url + format!("{}=w{}-h{}", &self.baseUrl, w, h).as_str();
             Ok(url)
         } else {
+//            url = url + format!("{}=dv", )
             println!("video not supported {}", self.id);
             Err(CustomError::Err("video not supported".to_string()))
         }
