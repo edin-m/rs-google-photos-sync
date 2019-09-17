@@ -40,8 +40,7 @@ impl<T> KeyValueStore<T>
         vec
     }
 
-    pub fn get(&self, key: &String) -> Option<&T>
-    {
+    pub fn get(&self, key: &String) -> Option<&T> {
         self.data.get(key)
     }
 

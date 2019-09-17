@@ -9,22 +9,23 @@ extern crate scoped_threadpool;
 extern crate serde;
 extern crate serde_json;
 
+use std::collections::{HashMap, HashSet};
+use std::iter::FromIterator;
 use std::option::Option;
 use std::sync::mpsc;
 use std::sync::mpsc::{Receiver, Sender};
 use std::thread;
 use std::time::Duration;
 use std::vec::Vec;
-use std::iter::FromIterator;
 
 use chrono::{DateTime, Utc};
 use commander::Commander;
 use job_scheduler::{Job, JobScheduler};
 
-use crate::error::{CustomResult};
+use crate::error::CustomResult;
 use crate::google_api::GoogleAuthApi;
 use crate::google_photos::GooglePhotosApi;
-use std::collections::{HashSet, HashMap};
+use std::path::Path;
 
 mod downloader;
 mod error;
@@ -97,8 +98,8 @@ pub type StoredItemStore = my_db::KeyValueStore<StoredItem>;
 fn main() -> CustomResult<()> {
     let command = Commander::new()
         .usage_desc("Read-only sync Google Photos onto a local disk")
-        .option_list("-s, --search", "Search and store media items", None)
-        .option_list("-d, --download", "Download media items", None)
+        .option_list("-s, --search", "[days back] [limit] Search and store media items", None)
+        .option_list("-d, --download", "[num files] Download media items", None)
         .parse_env_or_exit();
 
     let (tx, rx) = mpsc::channel();
@@ -243,13 +244,13 @@ impl App {
         type Filename = String;
         let mut map: HashMap<Filename, Vec<MediaItemId>> = HashMap::new();
 
-        for v in self.storage.get_all() {
-            let filename = v.get_filename();
+        for stored_item in self.storage.get_all() {
+            let filename = stored_item.mediaItem.filename.to_owned();
 
             if let Some(ids) = map.get_mut(&filename) {
                 ids.push(filename);
             } else {
-                map.insert(filename, vec![v.get_media_item_id()]);
+                map.insert(filename, vec![stored_item.get_media_item_id()]);
             }
         }
 
@@ -260,20 +261,21 @@ impl App {
             }).collect::<HashMap<_, _>>();
 
         let dup_size = dups.len();
-        println!("Found {} duplicate files", dup_size * 2);
+        println!("Found {} duplicate files", dup_size);
 
-        for (_, v) in map {
-            if v.len() > 1 {
-                let mut i = 0;
-                while i < v.len() {
-                    let id = v.get(i).unwrap();
-                    if let Some(mut item) = self.storage.get_cloned(&id) {
-                        item.alt_filename = Some(format!("{}_{}", i, item.get_filename()));
+        for (_, id) in dups {
+            let mut i = 0;
+            while i < id.len() {
+                let id = id.get(i).unwrap();
+                if let Some(mut item) = self.storage.get_cloned(&id) {
+                    if item.alt_filename.is_none() {
+                        let filename = Path::new(item.mediaItem.filename);
+                        item.alt_filename = Some(format!("{}_{}", i, item.mediaItem.filename));
                         self.storage.set(&item.get_media_item_id(), item);
                     }
-
-                    i += 1;
                 }
+
+                i += 1;
             }
         }
     }

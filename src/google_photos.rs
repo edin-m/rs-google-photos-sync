@@ -49,7 +49,7 @@ fn search(token: &GoogleToken, num_days_back: i32, limit_hint: usize)
         media_items.append(&mut resp_media_items);
 
         if let Some(next_page_token) = resp.nextPageToken {
-            page_token = Some(next_page_token.to_owned());
+            page_token = Some(next_page_token);
         } else {
             break;
         }
@@ -70,8 +70,6 @@ fn make_search_reqwest(client: &Client, page_token: &Option<String>, days_back: 
         pageToken: if page_token.is_some() { Some(page_token.as_ref().unwrap().to_owned()) } else { None },
         filters: search_filter,
     };
-
-//    println!("{}", serde_json::to_string_pretty(&search_request).unwrap());
 
     let mut resp = client
         .post("https://photoslibrary.googleapis.com/v1/mediaItems:search")
