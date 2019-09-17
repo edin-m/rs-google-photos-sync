@@ -166,11 +166,11 @@ impl App {
             println!("Split num of files {}x{}+{}, group {}",
                      groups, NUMBER_OF_FILES_PER_BATCH, remainder, i
             );
-            let _ = self._fine_grade_download(NUMBER_OF_FILES_PER_BATCH)?;
+            self._fine_grade_download(NUMBER_OF_FILES_PER_BATCH)?;
         }
 
         if remainder > 0 {
-            self._fine_grade_download(remainder);
+            self._fine_grade_download(remainder)?;
         }
 
         Ok(())
@@ -179,6 +179,8 @@ impl App {
     fn _fine_grade_download(&mut self, num_files: i32) -> CustomResult<()> {
         let selected_stored_items = self.storage.select_files_for_download(num_files);
         let selected_ids = extract_media_item_ids(&selected_stored_items);
+
+        println!("selected {}", selected_ids.len());
 
         let updated_media_items =
             self.photos_api.batch_get(&selected_ids)?;

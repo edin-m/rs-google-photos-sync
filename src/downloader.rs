@@ -8,6 +8,7 @@ use scoped_threadpool::Pool;
 
 use crate::{MediaItemId, StoredItem};
 use crate::error::{CustomResult};
+use filetime::FileTime;
 
 pub fn download(stored_items: &Vec<StoredItem>) -> CustomResult<Vec<MediaItemId>> {
     fs::create_dir_all("google/photos")?;
@@ -65,9 +66,13 @@ impl Download for StoredItem {
         let mut resp = reqwest::get(url.as_str())?;
         let path = Path::new("google/photos").join(&filename);
         println!("downloading {}", filename);
-        let mut dest = File::create(path)?;
+        let mut dest = File::create(&path)?;
 
         let _ = copy(&mut resp, &mut dest)?;
+
+        filetime::set_file_mtime(&path, FileTime::from_unix_time(
+            self.mediaItem.mediaMetadata.creationTime.timestamp(), 0
+        ))?;
 
         Ok(())
     }
