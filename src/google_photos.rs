@@ -223,9 +223,8 @@ impl DownloadUrl for MediaItem {
             url = url + format!("{}=w{}-h{}", &self.baseUrl, w, h).as_str();
             Ok(url)
         } else {
-//            url = url + format!("{}=dv", )
-            println!("video not supported {}", self.id);
-            Err(CustomError::Err("video not supported".to_string()))
+            url = url + format!("{}=dv", &self.baseUrl).as_str();
+            Ok(url)
         }
     }
 }
