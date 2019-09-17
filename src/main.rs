@@ -8,6 +8,7 @@ extern crate scoped_threadpool;
 #[macro_use]
 extern crate serde;
 extern crate serde_json;
+extern crate cron;
 
 use std::collections::{HashMap, HashSet};
 use std::iter::FromIterator;
@@ -20,12 +21,11 @@ use std::vec::Vec;
 
 use chrono::{DateTime, Utc};
 use commander::Commander;
-use job_scheduler::{Job, JobScheduler};
+use job_scheduler::{Job, JobScheduler, Schedule};
 
 use crate::error::CustomResult;
 use crate::google_api::GoogleAuthApi;
 use crate::google_photos::GooglePhotosApi;
-use std::path::Path;
 
 mod downloader;
 mod error;
@@ -119,7 +119,7 @@ fn main() -> CustomResult<()> {
         tx.send(JobTask::DownloadFilesTask(num_items)).unwrap();
         drop(tx);
     } else {
-        run_job_scheduler(tx.clone());
+        run_job_scheduler(tx.clone())?;
     }
 
     let storage = StoredItemStore::new("secrets/photos.data");
@@ -188,13 +188,7 @@ impl App {
 
         let updated_ids = extract_media_item_ids(&updated_media_items);
 
-        let mut stored_items = Vec::new();
-
-        for id in updated_ids {
-            if let Some(a) = self.storage.get_cloned(&id) {
-                stored_items.push(a);
-            }
-        }
+        let stored_items = self.get_stored_items_by_ids(&updated_ids);
 
         let downloaded_ids = downloader::download(&stored_items)?;
 
@@ -212,6 +206,18 @@ impl App {
 
         self.on_media_items(updated_media_items)?;
         Ok(())
+    }
+
+    fn get_stored_items_by_ids(&self, ids: &Vec<MediaItemId>) -> Vec<StoredItem> {
+        let mut stored_items = Vec::new();
+
+        for id in ids {
+            if let Some(a) = self.storage.get_cloned(&id) {
+                stored_items.push(a);
+            }
+        }
+
+        stored_items
     }
 
     fn on_media_items(&mut self, media_items: Vec<MediaItem>) -> CustomResult<()> {
@@ -269,7 +275,6 @@ impl App {
                 let id = id.get(i).unwrap();
                 if let Some(mut item) = self.storage.get_cloned(&id) {
                     if item.alt_filename.is_none() {
-                        let filename = Path::new(item.mediaItem.filename);
                         item.alt_filename = Some(format!("{}_{}", i, item.mediaItem.filename));
                         self.storage.set(&item.get_media_item_id(), item);
                     }
@@ -353,24 +358,27 @@ enum JobTask {
     SearchFilesTask(i32, usize)
 }
 
-fn run_job_scheduler(tx: Sender<JobTask>) {
+fn run_job_scheduler(tx: Sender<JobTask>) -> CustomResult<()> {
+    let refresh_task_schedule: Schedule = "0/30 * * * * *".parse()?;
+    let search_task_schedule: Schedule = "0 0/20 * * * *".parse()?;
+    let download_task_schedule: Schedule = "0 0/5 * * * *".parse()?;
+
+    let search_days_back = 10;
+    let search_limit = 10000;
+    let download_files = 10;
+
     thread::spawn(move || {
         let mut sched = JobScheduler::new();
 
-        let search_days_back = 10;
-        let search_limit = 10000;
-
-        let download_files = 10;
-
-        sched.add(Job::new("0/30 * * * * *".parse().unwrap(), || {
+        sched.add(Job::new(refresh_task_schedule, || {
             tx.send(JobTask::RefreshTokenTask).unwrap();
         }));
 
-        sched.add(Job::new("0 0/20 * * * *".parse().unwrap(), || {
+        sched.add(Job::new(search_task_schedule, || {
             tx.send(JobTask::SearchFilesTask(search_days_back, search_limit)).unwrap();
         }));
 
-        sched.add(Job::new("0 0/5 * * * *".parse().unwrap(), || {
+        sched.add(Job::new(download_task_schedule, || {
             tx.send(JobTask::DownloadFilesTask(download_files)).unwrap();
         }));
 
@@ -380,6 +388,8 @@ fn run_job_scheduler(tx: Sender<JobTask>) {
             std::thread::sleep(Duration::from_millis(500));
         }
     });
+
+    Ok(())
 }
 
 fn run_task_receiver(rx: &Receiver<JobTask>, mut app: App) -> CustomResult<()> {

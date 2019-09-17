@@ -78,3 +78,9 @@ impl From<std::boxed::Box<dyn std::any::Any + std::marker::Send>> for CustomErro
         CustomError::Err(format!("error joining thread"))
     }
 }
+
+impl From<cron::error::Error> for CustomError {
+    fn from(e: cron::error::Error) -> Self {
+        CustomError::Err(format!("error with cron string {}", e))
+    }
+}

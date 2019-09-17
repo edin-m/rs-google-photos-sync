@@ -75,7 +75,7 @@ impl<T> KeyValueStore<T>
         let mut results = Vec::<T>::new();
 
         let mut counter = 0;
-        let max_items = if limit.is_some() { limit.unwrap() } else { self.data.len() };
+        let max_items = limit.unwrap_or(self.data.len());
 
         for (k, _) in self.data.iter().filter(filter_fn) {
             if let Some(cloned) = self.get_cloned(k) {
