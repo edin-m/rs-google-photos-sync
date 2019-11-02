@@ -33,22 +33,7 @@ mod google_api;
 mod google_photos;
 mod my_db;
 mod util;
-
-// ==== CONFIG ===
-
-// refresh token schedule
-const REFRESH_SCHEDULE: &'static str = "0/30 * * * * *";
-// search job schedule
-const SEARCH_SCHEDULE: &'static str = "0 0/20 * * * *";
-// download job schedule
-const DOWNLOAD_SCHEDULE: &'static str = "0 0/5 * * * *";
-
-// search job -- search new images from x days back
-const SEARCH_DAYS_BACK: i32 = 10;
-// search job -- search item number limit
-const SEARCH_LIMIT: usize = 100000;
-// download job -- download file number at the same time
-const DOWNLOAD_FILES: i32 = 10;
+mod config;
 
 // =============
 
@@ -375,9 +360,11 @@ enum JobTask {
 }
 
 fn run_job_scheduler(tx: Sender<JobTask>) -> CustomResult<()> {
-    let refresh_task_schedule: Schedule = String::from(REFRESH_SCHEDULE).parse()?;
-    let search_task_schedule: Schedule = SEARCH_SCHEDULE.parse()?;
-    let download_task_schedule: Schedule = DOWNLOAD_SCHEDULE.parse()?;
+    let config = crate::config::Config::new()?;
+
+    let refresh_task_schedule: Schedule = String::from(config.refresh_token_schedule.to_owned()).parse()?;
+    let search_task_schedule: Schedule = config.search_new_items_schedule.parse()?;
+    let download_task_schedule: Schedule = config.download_photos_schedule.parse()?;
 
     thread::spawn(move || {
         let mut sched = JobScheduler::new();
@@ -387,11 +374,11 @@ fn run_job_scheduler(tx: Sender<JobTask>) -> CustomResult<()> {
         }));
 
         sched.add(Job::new(search_task_schedule, || {
-            tx.send(JobTask::SearchFilesTask(SEARCH_DAYS_BACK, SEARCH_LIMIT)).unwrap();
+            tx.send(JobTask::SearchFilesTask(config.search_days_back, config.search_limit)).unwrap();
         }));
 
         sched.add(Job::new(download_task_schedule, || {
-            tx.send(JobTask::DownloadFilesTask(DOWNLOAD_FILES)).unwrap();
+            tx.send(JobTask::DownloadFilesTask(config.download_files_parallel)).unwrap();
         }));
 
         loop {

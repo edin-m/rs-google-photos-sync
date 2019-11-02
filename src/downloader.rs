@@ -9,6 +9,7 @@ use scoped_threadpool::Pool;
 use crate::{MediaItemId, StoredItem};
 use crate::error::{CustomResult};
 use filetime::FileTime;
+use crate::config::Config;
 
 pub fn download(stored_items: &Vec<StoredItem>) -> CustomResult<Vec<MediaItemId>> {
     fs::create_dir_all("google/photos")?;

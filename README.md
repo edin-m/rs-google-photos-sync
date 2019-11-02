@@ -42,3 +42,6 @@ In cron mode, it's searching 10 days back and downloading 10 files at a time.
 This can be changed in main.rs
 
 Duplicate filenames are prefixed with 0_ 1_ 2_ ...
+
+TODO:
+ * windows filetime not working properly

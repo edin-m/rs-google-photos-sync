@@ -1,0 +1,9 @@
+{
+  "refresh_token_schedule": "0/30 * * * * *",
+  "search_new_items_schedule": "0 0/20 * * * *",
+  "download_photos_schedule": "0 0/5 * * * *",
+  "search_days_back": 10,
+  "search_limit": 100000,
+  "download_files_parallel": 10,
+  "storage_location": "~/Users/edin-m/rs_google_photos"
+}
