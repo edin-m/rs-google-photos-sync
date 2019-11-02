@@ -34,6 +34,22 @@ mod google_photos;
 mod my_db;
 mod util;
 
+// ==== CONFIG ===
+
+// refresh token schedule
+const REFRESH_SCHEDULE: &'static str = "0/30 * * * * *";
+// search job schedule
+const SEARCH_SCHEDULE: &'static str = "0 0/20 * * * *";
+// download job schedule
+const DOWNLOAD_SCHEDULE: &'static str = "0 0/5 * * * *";
+
+// search job -- search new images from x days back
+const SEARCH_DAYS_BACK: i32 = 10;
+// search job -- search item number limit
+const SEARCH_LIMIT: usize = 100000;
+// download job -- download file number at the same time
+const DOWNLOAD_FILES: i32 = 10;
+
 // =============
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -359,13 +375,9 @@ enum JobTask {
 }
 
 fn run_job_scheduler(tx: Sender<JobTask>) -> CustomResult<()> {
-    let refresh_task_schedule: Schedule = "0/30 * * * * *".parse()?;
-    let search_task_schedule: Schedule = "0 0/20 * * * *".parse()?;
-    let download_task_schedule: Schedule = "0 0/5 * * * *".parse()?;
-
-    let search_days_back = 10;
-    let search_limit = 10000;
-    let download_files = 10;
+    let refresh_task_schedule: Schedule = String::from(REFRESH_SCHEDULE).parse()?;
+    let search_task_schedule: Schedule = SEARCH_SCHEDULE.parse()?;
+    let download_task_schedule: Schedule = DOWNLOAD_SCHEDULE.parse()?;
 
     thread::spawn(move || {
         let mut sched = JobScheduler::new();
@@ -375,11 +387,11 @@ fn run_job_scheduler(tx: Sender<JobTask>) -> CustomResult<()> {
         }));
 
         sched.add(Job::new(search_task_schedule, || {
-            tx.send(JobTask::SearchFilesTask(search_days_back, search_limit)).unwrap();
+            tx.send(JobTask::SearchFilesTask(SEARCH_DAYS_BACK, SEARCH_LIMIT)).unwrap();
         }));
 
         sched.add(Job::new(download_task_schedule, || {
-            tx.send(JobTask::DownloadFilesTask(download_files)).unwrap();
+            tx.send(JobTask::DownloadFilesTask(DOWNLOAD_FILES)).unwrap();
         }));
 
         loop {
