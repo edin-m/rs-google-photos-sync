@@ -5,5 +5,5 @@
   "search_days_back": 10,
   "search_limit": 100000,
   "download_files_parallel": 10,
-  "storage_location": "~/Users/edin-m/rs_google_photos"
+  "storage_location": "/Users/edin-m/goolge-photos-read-only"
 }

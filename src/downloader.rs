@@ -12,7 +12,8 @@ use filetime::FileTime;
 use crate::config::Config;
 
 pub fn download(stored_items: &Vec<StoredItem>) -> CustomResult<Vec<MediaItemId>> {
-    fs::create_dir_all("google/photos")?;
+    let config = Config::new()?;
+    fs::create_dir_all(config.storage_location)?;
 
     let group_size = 5;
     let mut pool = Pool::new(group_size);
@@ -60,12 +61,13 @@ pub trait DownloadUrl {
 
 impl Download for StoredItem {
     fn download(&self) -> CustomResult<()> {
+        let config = Config::new()?;
         let filename = self.get_filename();
 
         let url = self.mediaItem.create_download_url()?;
 
         let mut resp = reqwest::get(url.as_str())?;
-        let path = Path::new("google/photos").join(&filename);
+        let path = Path::new(config.storage_location.as_str()).join(&filename);
         println!("downloading {}", filename);
         let mut dest = File::create(&path)?;
 
