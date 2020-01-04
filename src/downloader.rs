@@ -19,12 +19,14 @@ pub fn download(stored_items: &Vec<StoredItem>) -> CustomResult<Vec<MediaItemId>
     let mut pool = Pool::new(group_size);
 
     let (tx, rx) = mpsc::channel();
+    let config = Config::new()?;
+    let dest_dir= config.storage_location.as_str();
 
     pool.scoped(|scoped| {
         for stored_item in stored_items {
             let tx = tx.clone();
             scoped.execute(move || {
-                let res = stored_item.download();
+                let res = stored_item.download(dest_dir);
 
                 match res {
                     Ok(_) => tx.send(Some(stored_item.mediaItem.id.to_owned())).unwrap(),
@@ -51,8 +53,8 @@ pub fn download(stored_items: &Vec<StoredItem>) -> CustomResult<Vec<MediaItemId>
 }
 
 
-pub trait Download {
-    fn download(&self) -> CustomResult<()>;
+trait Download {
+    fn download(&self, dest_dir: &str) -> CustomResult<()>;
 }
 
 pub trait DownloadUrl {
@@ -60,17 +62,16 @@ pub trait DownloadUrl {
 }
 
 impl Download for StoredItem {
-    fn download(&self) -> CustomResult<()> {
-        let config = Config::new()?;
+    fn download(&self, dest_dir: &str) -> CustomResult<()> {
         let filename = self.get_filename();
 
         let url = self.mediaItem.create_download_url()?;
 
-        let mut resp = reqwest::get(url.as_str())?;
-        let path = Path::new(config.storage_location.as_str()).join(&filename);
-        println!("downloading {}", filename);
+        let path = Path::new(dest_dir).join(&filename);
         let mut dest = File::create(&path)?;
 
+        let mut resp = reqwest::get(url.as_str())?;
+        println!("downloading {}", filename);
         let _ = copy(&mut resp, &mut dest)?;
 
         filetime::set_file_mtime(&path, FileTime::from_unix_time(

@@ -34,6 +34,15 @@ mod google_photos;
 mod my_db;
 mod util;
 mod config;
+mod app_storage;
+
+use app_storage::AppStorage;
+
+// =======
+
+// TODO: go through downloaded images and mark them as downloaded in the database on startup
+// TODO: also mark them as not downloaded if they don't exist
+// TODO: optimize/refactor image download process (is slicing a list 2x)
 
 // =============
 
@@ -46,7 +55,7 @@ pub struct StoredItem {
 }
 
 impl StoredItem {
-    pub fn get_filename(&self) -> String {
+    fn get_filename(&self) -> String {
         if let Some(alt_filename) = &self.alt_filename {
             alt_filename.to_owned()
         } else {
@@ -87,6 +96,12 @@ pub struct Video {}
 #[derive(Serialize, Deserialize, Debug)]
 pub struct AppData {
     pub download_info: Option<DownloadInfo>,
+}
+
+impl AppData {
+    fn has_download_info(&self) -> bool {
+        self.download_info.is_none()
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -183,18 +198,15 @@ impl App {
         let selected_ids = extract_media_item_ids(&selected_stored_items);
 
         println!("selected {}", selected_ids.len());
-
         let updated_media_items =
             self.photos_api.batch_get(&selected_ids)?;
 
         let updated_ids = extract_media_item_ids(&updated_media_items);
-
         let stored_items = self.get_stored_items_by_ids(&updated_ids);
 
         let downloaded_ids = downloader::download(&stored_items)?;
 
         let hash: HashSet<&MediaItemId> = HashSet::from_iter(downloaded_ids.iter());
-
         let mark_downloaded = updated_media_items
             .iter()
             .filter(|item| {
@@ -204,13 +216,13 @@ impl App {
             .collect::<Vec<_>>();
 
         self.storage.mark_downloaded(&mark_downloaded);
-
         self.on_media_items(updated_media_items)?;
+
         Ok(())
     }
 
     fn get_stored_items_by_ids(&self, ids: &Vec<MediaItemId>) -> Vec<StoredItem> {
-        let mut stored_items = Vec::new();
+        let mut stored_items = Vec::with_capacity(ids.len());
 
         for id in ids {
             if let Some(a) = self.storage.get_cloned(&id) {
@@ -292,44 +304,44 @@ impl App {
         Ok(())
     }
 }
-
-trait AppStorage {
-    fn select_files_for_download(&self, limit: i32) -> Vec<StoredItem>;
-
-    fn mark_downloaded(&mut self, media_item_ids: &Vec<MediaItemId>);
-}
-
-impl AppStorage for StoredItemStore {
-    fn select_files_for_download(&self, limit: i32) -> Vec<StoredItem> {
-        self.filter_values(|(_, v)| {
-            let mut result = true;
-
-            if let Some(app_data) = &v.appData {
-                if let Some(_) = &app_data.download_info {
-                    result = false;
-                } else {
-                    result = true;
-                }
-            }
-
-            result
-        }, Some(limit as usize))
-    }
-
-    fn mark_downloaded(&mut self, media_item_ids: &Vec<MediaItemId>) {
-        for id in media_item_ids {
-            if let Some(mut stored_item) = self.get_cloned(&id) {
-                let app_data = AppData {
-                    download_info: Some(DownloadInfo {
-                        downloaded_at: Utc::now()
-                    })
-                };
-                stored_item.appData = Some(app_data);
-                self.set(&id, stored_item);
-            }
-        }
-    }
-}
+//
+//trait AppStorage {
+//    fn select_files_for_download(&self, limit: i32) -> Vec<StoredItem>;
+//
+//    fn mark_downloaded(&mut self, media_item_ids: &Vec<MediaItemId>);
+//}
+//
+//impl AppStorage for StoredItemStore {
+//    fn select_files_for_download(&self, limit: i32) -> Vec<StoredItem> {
+//        self.filter_values(|(_, v)| {
+//            let mut result = true;
+//
+//            if let Some(app_data) = &v.appData {
+//                if let Some(_) = &app_data.download_info {
+//                    result = false;
+//                } else {
+//                    result = true;
+//                }
+//            }
+//
+//            result
+//        }, Some(limit as usize))
+//    }
+//
+//    fn mark_downloaded(&mut self, media_item_ids: &Vec<MediaItemId>) {
+//        for id in media_item_ids {
+//            if let Some(mut stored_item) = self.get_cloned(&id) {
+//                let app_data = AppData {
+//                    download_info: Some(DownloadInfo {
+//                        downloaded_at: Utc::now()
+//                    })
+//                };
+//                stored_item.appData = Some(app_data);
+//                self.set(&id, stored_item);
+//            }
+//        }
+//    }
+//}
 
 trait HasMediaItemId {
     fn get_media_item_id(&self) -> MediaItemId;

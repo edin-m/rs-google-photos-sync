@@ -20,7 +20,6 @@ pub fn read_json_file<T>(path: String) -> CustomResult<T>
 pub fn split_into_groups<T>(items: &Vec<T>, group_size: usize) -> Vec<Vec<&T>>
 {
     let mut groups = Vec::new();
-
     let num_groups = (items.len() as f32 / group_size as f32).ceil() as usize;
 
     for i in 0..num_groups {
