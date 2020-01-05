@@ -10,7 +10,6 @@ use crate::{MediaItem};
 use crate::downloader::DownloadUrl;
 use crate::error::{CustomError, CustomResult};
 use crate::google_api::GoogleToken;
-use crate::util;
 
 pub struct GooglePhotosApi {
     pub token: GoogleToken
@@ -19,10 +18,6 @@ pub struct GooglePhotosApi {
 impl GooglePhotosApi {
     pub fn search(&self, num_days_back: i32, limit_hint: usize) -> CustomResult<Vec<MediaItem>> {
         search(&self.token, num_days_back, limit_hint)
-    }
-
-    pub fn batch_get(&self, media_item_ids: &Vec<String>) -> CustomResult<Vec<MediaItem>> {
-        batch_get(media_item_ids, &self.token)
     }
 }
 
@@ -153,63 +148,6 @@ impl<T: TimeZone> From<DateTime<T>> for Date {
             day: date_time.day(),
         }
     }
-}
-
-fn batch_get(media_item_ids: &Vec<String>, google_token: &GoogleToken) -> CustomResult<Vec<MediaItem>> {
-    const MAX_GOOGLE_BATCH_GET_SIZE: usize = 50;
-
-    let groups = util::split_into_groups(media_item_ids, MAX_GOOGLE_BATCH_GET_SIZE);
-    println!("split {} items into {} groups", media_item_ids.len(), groups.len());
-
-    let mut got = Vec::new();
-
-    for group in groups {
-        let items = _batch_get(&group, google_token)?;
-
-        println!("fetched {}", items.len());
-
-        for item in items {
-            got.push(item);
-        }
-    }
-
-    Ok(got)
-}
-
-fn _batch_get(media_item_ids: &Vec<&String>, google_token: &GoogleToken) -> CustomResult<Vec<MediaItem>> {
-    let mut url = String::from("https://photoslibrary.googleapis.com/v1/mediaItems:batchGet?");
-
-    for media_item_id in media_item_ids {
-        url = url + &format!("mediaItemIds={}&", media_item_id);
-    }
-
-    let mut headers = HeaderMap::new();
-    let token = format!("Bearer {}", google_token.token.access_token);
-    headers.insert(
-        header::AUTHORIZATION,
-        HeaderValue::from_str(&token)?,
-    );
-
-    let client = ClientBuilder::new().default_headers(headers).build()?;
-
-    let res: BatchGetResult = client.get(url.as_str()).send()?.json()?;
-
-    Ok(res.mediaItemResults
-        .into_iter()
-        .map(|v| v.mediaItem)
-        .collect::<Vec<_>>())
-}
-
-#[derive(Deserialize, Debug)]
-#[allow(non_snake_case)]
-struct BatchGetResult {
-    pub mediaItemResults: Vec<MediaItemResult>,
-}
-
-#[derive(Deserialize, Debug)]
-#[allow(non_snake_case)]
-struct MediaItemResult {
-    pub mediaItem: MediaItem,
 }
 
 impl DownloadUrl for MediaItem {

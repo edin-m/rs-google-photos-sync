@@ -15,6 +15,7 @@ use std::iter::FromIterator;
 use std::option::Option;
 use std::sync::mpsc;
 use std::vec::Vec;
+use std::fs::read_dir;
 
 use chrono::{DateTime, Utc};
 use commander::Commander;
@@ -38,10 +39,9 @@ use scheduling::JobTask;
 use std::sync::mpsc::Receiver;
 
 // =======
+// TODO: mark non-downloaded every file in db but not in fs
 
-// TODO: go through downloaded images and mark them as downloaded in the database on startup
 // TODO: also mark them as not downloaded if they don't exist
-// TODO: optimize/refactor image download process (is slicing a list 2x)
 
 // =============
 
@@ -119,11 +119,12 @@ fn main() -> CustomResult<()> {
 
     let (tx, rx) = mpsc::channel();
 
+
     if let Some(search_params) = command.get_list("search") {
         let days_back = search_params.get(0).unwrap().parse::<i32>()?;
         let default_limit = String::from("999999");
         let limit_hint = search_params.get(1).unwrap_or(&default_limit).parse::<usize>()?;
-        println!("search params {} {}", days_back, limit_hint);
+        println!("search params days_back:{} limit:{}", days_back, limit_hint);
 
         tx.send(JobTask::SearchFilesTask(days_back, limit_hint)).unwrap();
         drop(tx);
@@ -134,9 +135,6 @@ fn main() -> CustomResult<()> {
         tx.send(JobTask::DownloadFilesTask(num_items)).unwrap();
         drop(tx);
     } else {
-        // analyze/sync fs with db
-        // TODO: mark non-downloaded every downloaded file in db but not in fs
-        // TODO: mark downloaded every downloaded file in fs and in db by filename
         scheduling::run_job_scheduler(tx.clone())?;
     }
 
@@ -176,7 +174,7 @@ impl App {
     }
 
     pub fn download(&mut self, num_files: i32) -> CustomResult<()> {
-        const NUMBER_OF_FILES_PER_BATCH: i32 = 50;
+        const NUMBER_OF_FILES_PER_BATCH: i32 = 20;
 
         let groups = num_files / NUMBER_OF_FILES_PER_BATCH;
         let remainder = num_files % NUMBER_OF_FILES_PER_BATCH;
@@ -185,17 +183,17 @@ impl App {
             println!("Split num of files {}x{}+{}, group {}",
                      groups, NUMBER_OF_FILES_PER_BATCH, remainder, i
             );
-            self._fine_grade_download(NUMBER_OF_FILES_PER_BATCH)?;
+            self.download_files(NUMBER_OF_FILES_PER_BATCH)?;
         }
 
         if remainder > 0 {
-            self._fine_grade_download(remainder)?;
+            self.download_files(remainder)?;
         }
 
         Ok(())
     }
 
-    fn _fine_grade_download(&mut self, num_files: i32) -> CustomResult<()> {
+    fn download_files(&mut self, num_files: i32) -> CustomResult<()> {
         let selected_stored_items = self.storage.select_files_for_download(num_files as usize);
 
         let downloaded_ids = downloader::download(&selected_stored_items)?;
