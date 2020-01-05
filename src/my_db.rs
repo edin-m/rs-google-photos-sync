@@ -112,18 +112,18 @@ impl<T> KeyValueStore<T>
     }
 }
 
-#[cfg(test)]
-mod test {
-    use super::*;
-
-    struct Example {
-        pub a: i32,
-        pub b: i32
-    }
-
-    #[test]
-    pub fn test() {
-        let e = Example { a: 5, b: 3 };
-
-    }
-}
+//#[cfg(test)]
+//mod test {
+//    use super::*;
+//
+//    struct Example {
+//        pub a: i32,
+//        pub b: i32
+//    }
+//
+//    #[test]
+//    pub fn test() {
+//        let e = Example { a: 5, b: 3 };
+//
+//    }
+//}

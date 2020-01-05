@@ -3,13 +3,13 @@ use chrono::{Utc};
 use crate::{StoredItem, MediaItemId, StoredItemStore, AppData, DownloadInfo};
 
 pub trait AppStorage {
-    fn select_files_for_download(&self, limit: i32) -> Vec<StoredItem>;
+    fn select_files_for_download(&self, limit: usize) -> Vec<StoredItem>;
 
     fn mark_downloaded(&mut self, media_item_ids: &Vec<MediaItemId>);
 }
 
 impl AppStorage for StoredItemStore {
-    fn select_files_for_download(&self, limit: i32) -> Vec<StoredItem> {
+    fn select_files_for_download(&self, limit: usize) -> Vec<StoredItem> {
         self.filter_values(|(_, v)| {
             let mut result = true;
 
@@ -18,7 +18,7 @@ impl AppStorage for StoredItemStore {
             }
 
             result
-        }, Some(limit as usize))
+        }, Some(limit))
     }
 
     fn mark_downloaded(&mut self, media_item_ids: &Vec<MediaItemId>) {

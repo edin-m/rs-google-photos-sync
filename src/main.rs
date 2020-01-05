@@ -14,14 +14,10 @@ use std::collections::{HashMap, HashSet};
 use std::iter::FromIterator;
 use std::option::Option;
 use std::sync::mpsc;
-use std::sync::mpsc::{Receiver, Sender};
-use std::thread;
-use std::time::Duration;
 use std::vec::Vec;
 
 use chrono::{DateTime, Utc};
 use commander::Commander;
-use job_scheduler::{Job, JobScheduler, Schedule};
 
 use crate::error::CustomResult;
 use crate::google_api::GoogleAuthApi;
@@ -35,8 +31,11 @@ mod my_db;
 mod util;
 mod config;
 mod app_storage;
+mod scheduling;
 
 use app_storage::AppStorage;
+use scheduling::JobTask;
+use std::sync::mpsc::Receiver;
 
 // =======
 
@@ -122,12 +121,12 @@ fn main() -> CustomResult<()> {
 
     if let Some(search_params) = command.get_list("search") {
         let days_back = search_params.get(0).unwrap().parse::<i32>()?;
-        let limit_hint = search_params.get(1).unwrap().parse::<usize>()?;
+        let default_limit = String::from("999999");
+        let limit_hint = search_params.get(1).unwrap_or(&default_limit).parse::<usize>()?;
         println!("search params {} {}", days_back, limit_hint);
 
         tx.send(JobTask::SearchFilesTask(days_back, limit_hint)).unwrap();
         drop(tx);
-
     } else if let Some(download_params) = command.get_list("download") {
         let num_items = download_params.get(0).unwrap().parse::<i32>()?;
         println!("download params {}", num_items);
@@ -135,7 +134,10 @@ fn main() -> CustomResult<()> {
         tx.send(JobTask::DownloadFilesTask(num_items)).unwrap();
         drop(tx);
     } else {
-        run_job_scheduler(tx.clone())?;
+        // analyze/sync fs with db
+        // TODO: mark non-downloaded every downloaded file in db but not in fs
+        // TODO: mark downloaded every downloaded file in fs and in db by filename
+        scheduling::run_job_scheduler(tx.clone())?;
     }
 
     let storage = StoredItemStore::new("secrets/photos.data");
@@ -194,48 +196,28 @@ impl App {
     }
 
     fn _fine_grade_download(&mut self, num_files: i32) -> CustomResult<()> {
-        let selected_stored_items = self.storage.select_files_for_download(num_files);
-        let selected_ids = extract_media_item_ids(&selected_stored_items);
+        let selected_stored_items = self.storage.select_files_for_download(num_files as usize);
 
-        println!("selected {}", selected_ids.len());
-        let updated_media_items =
-            self.photos_api.batch_get(&selected_ids)?;
-
-        let updated_ids = extract_media_item_ids(&updated_media_items);
-        let stored_items = self.get_stored_items_by_ids(&updated_ids);
-
-        let downloaded_ids = downloader::download(&stored_items)?;
+        let downloaded_ids = downloader::download(&selected_stored_items)?;
 
         let hash: HashSet<&MediaItemId> = HashSet::from_iter(downloaded_ids.iter());
-        let mark_downloaded = updated_media_items
+        let mark_downloaded = selected_stored_items
             .iter()
             .filter(|item| {
-                hash.contains(&item.id)
+                hash.contains(&item.mediaItem.id)
             })
-            .map(|item| { item.id.to_owned() })
+            .map(|item| { item.get_media_item_id() })
             .collect::<Vec<_>>();
 
         self.storage.mark_downloaded(&mark_downloaded);
-        self.on_media_items(updated_media_items)?;
+        self.storage.persist()?;
 
         Ok(())
     }
 
-    fn get_stored_items_by_ids(&self, ids: &Vec<MediaItemId>) -> Vec<StoredItem> {
-        let mut stored_items = Vec::with_capacity(ids.len());
-
-        for id in ids {
-            if let Some(a) = self.storage.get_cloned(&id) {
-                stored_items.push(a);
-            }
-        }
-
-        stored_items
-    }
-
     fn on_media_items(&mut self, media_items: Vec<MediaItem>) -> CustomResult<()> {
         for media_item in media_items {
-            let id = media_item.id.to_owned();
+            let id = media_item.get_media_item_id();
 
             if let Some(mut stored_item) = self.storage.get_cloned(&id) {
                 stored_item.mediaItem = media_item;
@@ -253,7 +235,6 @@ impl App {
         }
 
         self.fix_duplicate_filenames();
-
         self.storage.persist()?;
 
         Ok(())
@@ -304,53 +285,9 @@ impl App {
         Ok(())
     }
 }
-//
-//trait AppStorage {
-//    fn select_files_for_download(&self, limit: i32) -> Vec<StoredItem>;
-//
-//    fn mark_downloaded(&mut self, media_item_ids: &Vec<MediaItemId>);
-//}
-//
-//impl AppStorage for StoredItemStore {
-//    fn select_files_for_download(&self, limit: i32) -> Vec<StoredItem> {
-//        self.filter_values(|(_, v)| {
-//            let mut result = true;
-//
-//            if let Some(app_data) = &v.appData {
-//                if let Some(_) = &app_data.download_info {
-//                    result = false;
-//                } else {
-//                    result = true;
-//                }
-//            }
-//
-//            result
-//        }, Some(limit as usize))
-//    }
-//
-//    fn mark_downloaded(&mut self, media_item_ids: &Vec<MediaItemId>) {
-//        for id in media_item_ids {
-//            if let Some(mut stored_item) = self.get_cloned(&id) {
-//                let app_data = AppData {
-//                    download_info: Some(DownloadInfo {
-//                        downloaded_at: Utc::now()
-//                    })
-//                };
-//                stored_item.appData = Some(app_data);
-//                self.set(&id, stored_item);
-//            }
-//        }
-//    }
-//}
 
 trait HasMediaItemId {
     fn get_media_item_id(&self) -> MediaItemId;
-}
-
-fn extract_media_item_ids<T>(items: &Vec<T>) -> Vec<MediaItemId>
-    where T: HasMediaItemId
-{
-    items.iter().map(|item| item.get_media_item_id()).collect::<Vec<_>>()
 }
 
 impl HasMediaItemId for MediaItem {
@@ -363,44 +300,6 @@ impl HasMediaItemId for StoredItem {
     fn get_media_item_id(&self) -> MediaItemId {
         self.mediaItem.id.to_owned()
     }
-}
-
-enum JobTask {
-    RefreshTokenTask,
-    DownloadFilesTask(i32),
-    SearchFilesTask(i32, usize)
-}
-
-fn run_job_scheduler(tx: Sender<JobTask>) -> CustomResult<()> {
-    let config = crate::config::Config::new()?;
-
-    let refresh_task_schedule: Schedule = String::from(config.refresh_token_schedule.to_owned()).parse()?;
-    let search_task_schedule: Schedule = config.search_new_items_schedule.parse()?;
-    let download_task_schedule: Schedule = config.download_photos_schedule.parse()?;
-
-    thread::spawn(move || {
-        let mut sched = JobScheduler::new();
-
-        sched.add(Job::new(refresh_task_schedule, || {
-            tx.send(JobTask::RefreshTokenTask).unwrap();
-        }));
-
-        sched.add(Job::new(search_task_schedule, || {
-            tx.send(JobTask::SearchFilesTask(config.search_days_back, config.search_limit)).unwrap();
-        }));
-
-        sched.add(Job::new(download_task_schedule, || {
-            tx.send(JobTask::DownloadFilesTask(config.download_files_parallel)).unwrap();
-        }));
-
-        loop {
-            sched.tick();
-
-            std::thread::sleep(Duration::from_millis(500));
-        }
-    });
-
-    Ok(())
 }
 
 fn run_task_receiver(rx: &Receiver<JobTask>, mut app: App) -> CustomResult<()> {

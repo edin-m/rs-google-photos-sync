@@ -31,7 +31,7 @@ pub fn download(stored_items: &Vec<StoredItem>) -> CustomResult<Vec<MediaItemId>
                 match res {
                     Ok(_) => tx.send(Some(stored_item.mediaItem.id.to_owned())).unwrap(),
                     Err(e) => {
-                        println!("Error downloading {:#?}", e);
+                        println!("Error downloading {} {:#?}", stored_item.get_filename(), e);
                         tx.send(None).unwrap();
                     }
                 }
