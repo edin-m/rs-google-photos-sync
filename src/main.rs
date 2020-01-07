@@ -15,7 +15,6 @@ use std::iter::FromIterator;
 use std::option::Option;
 use std::sync::mpsc;
 use std::vec::Vec;
-use std::fs::read_dir;
 
 use chrono::{DateTime, Utc};
 use commander::Commander;
@@ -37,13 +36,11 @@ mod scheduling;
 use app_storage::AppStorage;
 use scheduling::JobTask;
 use std::sync::mpsc::Receiver;
-
-// =======
-// TODO: mark non-downloaded every file in db but not in fs
-
-// TODO: also mark them as not downloaded if they don't exist
+use crate::config::Config;
+use std::path::Path;
 
 // =============
+// TODO: test periodic save db to file
 
 #[derive(Serialize, Deserialize, Debug)]
 #[allow(non_snake_case)]
@@ -61,6 +58,14 @@ impl StoredItem {
             self.mediaItem.filename.to_owned()
         }
     }
+
+    fn is_marked_downloaded(&self) -> bool {
+        if let Some(app_data) = &self.appData {
+            app_data.download_info.is_some()
+        } else {
+            false
+        }
+    }
 }
 
 pub type MediaItemId = String;
@@ -71,7 +76,7 @@ pub struct MediaItem {
     pub id: MediaItemId,
     pub baseUrl: String,
     pub filename: String,
-    pub mediaMetadata: MediaMetaData
+    pub mediaMetadata: MediaMetaData,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -119,7 +124,6 @@ fn main() -> CustomResult<()> {
 
     let (tx, rx) = mpsc::channel();
 
-
     if let Some(search_params) = command.get_list("search") {
         let days_back = search_params.get(0).unwrap().parse::<i32>()?;
         let default_limit = String::from("999999");
@@ -144,11 +148,15 @@ fn main() -> CustomResult<()> {
 
     let photos_api = GooglePhotosApi { token };
 
-    let res = run_task_receiver(&rx, App {
+    let mut app = App {
         google_auth,
         photos_api,
         storage,
-    });
+    };
+
+    scan_fs_and_populate_db(&mut app)?;
+
+    let res = run_task_receiver(&rx, app);
 
     match res {
         Err(err) => panic!("Error {}", err.to_string()),
@@ -158,10 +166,43 @@ fn main() -> CustomResult<()> {
     Ok(())
 }
 
+// TODO: what if downloaded file is not complete
+// -- download to .tmp and rename after completion
+fn scan_fs_and_populate_db(app: &mut App) -> CustomResult<()>
+{
+    let config = Config::new()?;
+    let path = Path::new(config.storage_location.as_str());
+
+    let map = app.storage.get_media_item_id_by_file_name();
+
+    let mut mark_downloaded: Vec<MediaItemId> = Vec::new();
+
+    for entry in path.read_dir()? {
+        if let Ok(entry) = entry {
+            if entry.file_type()?.is_file() {
+                let file_name = entry.file_name().into_string().unwrap_or(String::from("unknown"));
+
+                if let Some(id) = map.get(&file_name) {
+                    if let Some(stored_item) = app.storage.get(id) {
+                        if !stored_item.is_marked_downloaded() {
+                            mark_downloaded.push(id.to_owned());
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    println!("Found {} items not marked as downloaded. Marking.", mark_downloaded.len());
+    app.storage.mark_downloaded(&mark_downloaded);
+
+    Ok(())
+}
+
 struct App {
     pub google_auth: GoogleAuthApi,
     pub photos_api: GooglePhotosApi,
-    pub storage: StoredItemStore
+    pub storage: StoredItemStore,
 }
 
 impl App {
@@ -306,11 +347,11 @@ fn run_task_receiver(rx: &Receiver<JobTask>, mut app: App) -> CustomResult<()> {
             JobTask::RefreshTokenTask => {
                 println!("RefreshTokenTask");
                 app.refresh_token()?;
-            },
+            }
             JobTask::DownloadFilesTask(num_files) => {
                 println!("DownloadFilesTask");
                 app.download(num_files)?;
-            },
+            }
             JobTask::SearchFilesTask(num_days_back, limit_hint) => {
                 println!("SearchFilesTask");
                 app.search(num_days_back, limit_hint)?;
