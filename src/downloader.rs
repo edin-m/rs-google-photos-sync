@@ -66,15 +66,20 @@ impl Download for StoredItem {
         let filename = self.get_filename();
 
         let url = self.mediaItem.create_download_url()?;
+        let path = Path::new(dest_dir).join(format!("{}.tmp", &filename));
 
-        let path = Path::new(dest_dir).join(&filename);
-        let mut dest = File::create(&path)?;
+        {
+            let mut dest = File::create(&path)?;
 
-        let mut resp = reqwest::get(url.as_str())?;
-        println!("downloading {}", filename);
-        let _ = copy(&mut resp, &mut dest)?;
+            let mut resp = reqwest::get(url.as_str())?;
+            println!("downloading {}", filename);
+            let _ = copy(&mut resp, &mut dest)?;
+        }
 
-        filetime::set_file_mtime(&path, FileTime::from_unix_time(
+        let rename_to = Path::new(dest_dir).join(&filename);
+        std::fs::rename(path, &rename_to)?;
+
+        filetime::set_file_mtime(&rename_to, FileTime::from_unix_time(
             self.mediaItem.mediaMetadata.creationTime.timestamp(), 0
         ))?;
 

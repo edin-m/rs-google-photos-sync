@@ -41,6 +41,9 @@ use std::path::Path;
 
 // =============
 // TODO: test periodic save db to file
+// TODO: marked downloaded items not on fs unmark downloaded
+// TODO: bring back batch get fresh before download -- old base urls become invalid
+// TODO: make configurable mark downloaded both options
 
 #[derive(Serialize, Deserialize, Debug)]
 #[allow(non_snake_case)]
@@ -166,8 +169,6 @@ fn main() -> CustomResult<()> {
     Ok(())
 }
 
-// TODO: what if downloaded file is not complete
-// -- download to .tmp and rename after completion
 fn scan_fs_and_populate_db(app: &mut App) -> CustomResult<()>
 {
     let config = Config::new()?;
