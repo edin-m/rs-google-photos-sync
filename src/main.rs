@@ -41,7 +41,6 @@ mod scheduling;
 
 // =============
 // TODO: test periodic save db to file
-// TODO: bring back batch get fresh before download -- old base urls become invalid
 // TODO: make configurable mark downloaded both options
 
 #[derive(Serialize, Deserialize, Debug)]
