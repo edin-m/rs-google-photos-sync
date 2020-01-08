@@ -1,5 +1,6 @@
 extern crate chrono;
 extern crate commander;
+extern crate cron;
 #[macro_use]
 extern crate nickel;
 extern crate opener;
@@ -8,17 +9,22 @@ extern crate scoped_threadpool;
 #[macro_use]
 extern crate serde;
 extern crate serde_json;
-extern crate cron;
 
 use std::collections::{HashMap, HashSet};
 use std::iter::FromIterator;
 use std::option::Option;
+use std::path::Path;
 use std::sync::mpsc;
+use std::sync::mpsc::Receiver;
 use std::vec::Vec;
 
 use chrono::{DateTime, Utc};
 use commander::Commander;
 
+use app_storage::AppStorage;
+use scheduling::JobTask;
+
+use crate::config::Config;
 use crate::error::CustomResult;
 use crate::google_api::GoogleAuthApi;
 use crate::google_photos::GooglePhotosApi;
@@ -33,15 +39,8 @@ mod config;
 mod app_storage;
 mod scheduling;
 
-use app_storage::AppStorage;
-use scheduling::JobTask;
-use std::sync::mpsc::Receiver;
-use crate::config::Config;
-use std::path::Path;
-
 // =============
 // TODO: test periodic save db to file
-// TODO: marked downloaded items not on fs unmark downloaded
 // TODO: bring back batch get fresh before download -- old base urls become invalid
 // TODO: make configurable mark downloaded both options
 
@@ -69,9 +68,23 @@ impl StoredItem {
             false
         }
     }
+
+    fn mark_downloaded(&mut self) {
+        self.appData = Some(AppData {
+            download_info: Some(DownloadInfo {
+                downloaded_at: Utc::now()
+            })
+        });
+    }
+
+    fn unmark_downloaded(&mut self) {
+        self.appData = None;
+    }
 }
 
 pub type MediaItemId = String;
+
+pub type FileName = String;
 
 #[derive(Serialize, Deserialize, Debug)]
 #[allow(non_snake_case)]
@@ -105,12 +118,6 @@ pub struct AppData {
     pub download_info: Option<DownloadInfo>,
 }
 
-impl AppData {
-    fn has_download_info(&self) -> bool {
-        self.download_info.is_none()
-    }
-}
-
 #[derive(Serialize, Deserialize, Debug)]
 pub struct DownloadInfo {
     pub downloaded_at: DateTime<Utc>,
@@ -124,6 +131,20 @@ fn main() -> CustomResult<()> {
         .option_list("-s, --search", "[days back] [limit] Search and store media items", None)
         .option_list("-d, --download", "[num files] Download media items", None)
         .parse_env_or_exit();
+
+    let storage = StoredItemStore::new("secrets/photos.data");
+    let mut google_auth = google_api::GoogleAuthApi::create();
+    let token = google_auth.authenticate_or_renew()?;
+
+    let photos_api = GooglePhotosApi { token };
+
+    let mut app = App {
+        google_auth,
+        photos_api,
+        storage,
+    };
+
+    mark_unmark_downloaded_photos_in_fs(&mut app)?;
 
     let (tx, rx) = mpsc::channel();
 
@@ -145,20 +166,6 @@ fn main() -> CustomResult<()> {
         scheduling::run_job_scheduler(tx.clone())?;
     }
 
-    let storage = StoredItemStore::new("secrets/photos.data");
-    let mut google_auth = google_api::GoogleAuthApi::create();
-    let token = google_auth.authenticate_or_renew()?;
-
-    let photos_api = GooglePhotosApi { token };
-
-    let mut app = App {
-        google_auth,
-        photos_api,
-        storage,
-    };
-
-    scan_fs_and_populate_db(&mut app)?;
-
     let res = run_task_receiver(&rx, app);
 
     match res {
@@ -169,35 +176,45 @@ fn main() -> CustomResult<()> {
     Ok(())
 }
 
-fn scan_fs_and_populate_db(app: &mut App) -> CustomResult<()>
+pub struct MarkDownloadedPartition {
+    mark_downloaded: Vec<MediaItemId>,
+    unmark_downloaded: Vec<MediaItemId>
+}
+
+fn mark_unmark_downloaded_photos_in_fs(app: &mut App) -> CustomResult<()>
+{
+    let downloaded = get_downloaded_files()?;
+    println!("Total # of files in fs: {}", downloaded.len());
+
+    let partition = app.storage.partition_by_marked_download(&downloaded);
+
+    println!("{} to be mark downloaded", partition.mark_downloaded.len());
+    println!("{} to be unmark downloaded", partition.unmark_downloaded.len());
+
+    app.storage.mark_downloaded(&partition.mark_downloaded)?;
+    app.storage.unmark_downloaded(&partition.unmark_downloaded)?;
+
+    Ok(())
+}
+
+fn get_downloaded_files() -> CustomResult<Box<HashSet<FileName>>>
 {
     let config = Config::new()?;
     let path = Path::new(config.storage_location.as_str());
 
-    let map = app.storage.get_media_item_id_by_file_name();
-
-    let mut mark_downloaded: Vec<MediaItemId> = Vec::new();
+    let mut file_names = Box::new(HashSet::new());
 
     for entry in path.read_dir()? {
         if let Ok(entry) = entry {
             if entry.file_type()?.is_file() {
-                let file_name = entry.file_name().into_string().unwrap_or(String::from("unknown"));
-
-                if let Some(id) = map.get(&file_name) {
-                    if let Some(stored_item) = app.storage.get(id) {
-                        if !stored_item.is_marked_downloaded() {
-                            mark_downloaded.push(id.to_owned());
-                        }
-                    }
+                if let Some(file_name) = entry.file_name().into_string().ok() {
+                    file_names.insert(file_name);
                 }
             }
         }
     }
 
-    println!("Found {} items not marked as downloaded. Marking.", mark_downloaded.len());
-    app.storage.mark_downloaded(&mark_downloaded);
-
-    Ok(())
+    Ok(file_names)
 }
 
 struct App {
@@ -216,7 +233,7 @@ impl App {
     }
 
     pub fn download(&mut self, num_files: i32) -> CustomResult<()> {
-        const NUMBER_OF_FILES_PER_BATCH: i32 = 20;
+        const NUMBER_OF_FILES_PER_BATCH: i32 = 50;
 
         let groups = num_files / NUMBER_OF_FILES_PER_BATCH;
         let remainder = num_files % NUMBER_OF_FILES_PER_BATCH;
@@ -237,6 +254,7 @@ impl App {
 
     fn download_files(&mut self, num_files: i32) -> CustomResult<()> {
         let selected_stored_items = self.storage.select_files_for_download(num_files as usize);
+        println!("Selected {} items for download", selected_stored_items.len());
 
         let downloaded_ids = downloader::download(&selected_stored_items)?;
 
@@ -249,8 +267,7 @@ impl App {
             .map(|item| { item.get_media_item_id() })
             .collect::<Vec<_>>();
 
-        self.storage.mark_downloaded(&mark_downloaded);
-        self.storage.persist()?;
+        self.storage.mark_downloaded(&mark_downloaded)?;
 
         Ok(())
     }

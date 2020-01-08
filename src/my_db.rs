@@ -1,5 +1,5 @@
 use std::boxed::Box;
-use std::collections::HashMap;
+use std::collections::{HashMap};
 use std::fs;
 use std::path::Path;
 
@@ -69,6 +69,8 @@ impl<T> KeyValueStore<T>
         Utc::now().signed_duration_since(self.last_save_at).num_milliseconds() > 5000
     }
 
+    // TODO: maybe make version of this without cloning
+    // todo: or replace this functionality with an iterator with an fn iter().take()
     pub fn filter_values<F>(&self, filter_fn: F, limit: Option<usize>) -> Vec<T>
         where F: Fn(&(&String, &T)) -> bool
     {
