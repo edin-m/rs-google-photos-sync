@@ -191,8 +191,10 @@ fn mark_unmark_downloaded_photos_in_fs(app: &mut App) -> CustomResult<()>
     println!("{} to be mark downloaded", partition.mark_downloaded.len());
     println!("{} to be unmark downloaded", partition.unmark_downloaded.len());
 
-    app.storage.mark_downloaded(&partition.mark_downloaded)?;
-    app.storage.unmark_downloaded(&partition.unmark_downloaded)?;
+    app.storage.mark_downloaded(&partition.mark_downloaded);
+    app.storage.unmark_downloaded(&partition.unmark_downloaded);
+
+    app.storage.persist()?;
 
     Ok(())
 }
@@ -254,22 +256,42 @@ impl App {
 
     fn download_files(&mut self, num_files: i32) -> CustomResult<()> {
         let selected_stored_items = self.storage.select_files_for_download(num_files as usize);
-        println!("Selected {} items for download", selected_stored_items.len());
+        let selected_ids = extract_media_item_ids(&selected_stored_items);
 
-        let downloaded_ids = downloader::download(&selected_stored_items)?;
+        println!("selected {}", selected_ids.len());
+        let updated_media_items =
+            self.photos_api.batch_get(&selected_ids)?;
+
+        let updated_ids = extract_media_item_ids(&updated_media_items);
+        let stored_items = self.get_stored_items_by_ids(&updated_ids);
+
+        let downloaded_ids = downloader::download(&stored_items)?;
 
         let hash: HashSet<&MediaItemId> = HashSet::from_iter(downloaded_ids.iter());
-        let mark_downloaded = selected_stored_items
+        let mark_downloaded = updated_media_items
             .iter()
             .filter(|item| {
-                hash.contains(&item.mediaItem.id)
+                hash.contains(&item.id.to_owned())
             })
             .map(|item| { item.get_media_item_id() })
             .collect::<Vec<_>>();
 
-        self.storage.mark_downloaded(&mark_downloaded)?;
+        self.storage.mark_downloaded(&mark_downloaded);
+        self.on_media_items(updated_media_items)?;
 
         Ok(())
+    }
+
+    fn get_stored_items_by_ids(&self, ids: &Vec<MediaItemId>) -> Vec<StoredItem> {
+        let mut stored_items = Vec::with_capacity(ids.len());
+
+        for id in ids {
+            if let Some(a) = self.storage.get_cloned(&id) {
+                stored_items.push(a);
+            }
+        }
+
+        stored_items
     }
 
     fn on_media_items(&mut self, media_items: Vec<MediaItem>) -> CustomResult<()> {
@@ -318,7 +340,7 @@ impl App {
             }).collect::<HashMap<_, _>>();
 
         let dup_size = dups.len();
-        println!("Found {} duplicate files", dup_size);
+        println!("Found {} duplicate file names", dup_size);
 
         for (_, id) in dups {
             let mut i = 0;
@@ -345,6 +367,12 @@ impl App {
 
 trait HasMediaItemId {
     fn get_media_item_id(&self) -> MediaItemId;
+}
+
+fn extract_media_item_ids<T>(items: &Vec<T>) -> Vec<MediaItemId>
+    where T: HasMediaItemId
+{
+    items.iter().map(|item| item.get_media_item_id()).collect::<Vec<_>>()
 }
 
 impl HasMediaItemId for MediaItem {

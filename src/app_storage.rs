@@ -1,7 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::{FileName, HasMediaItemId, MarkDownloadedPartition, MediaItemId, StoredItem, StoredItemStore};
-use crate::error::CustomResult;
 
 pub type MediaItemIdByFileName = HashMap<String, MediaItemId>;
 
@@ -10,9 +9,9 @@ pub trait AppStorage {
 
     fn select_files_for_download(&self, limit: usize) -> Vec<StoredItem>;
 
-    fn mark_downloaded(&mut self, media_item_ids: &Vec<MediaItemId>) -> CustomResult<()>;
+    fn mark_downloaded(&mut self, media_item_ids: &Vec<MediaItemId>);
 
-    fn unmark_downloaded(&mut self, media_item_ids: &Vec<MediaItemId>) -> CustomResult<()>;
+    fn unmark_downloaded(&mut self, media_item_ids: &Vec<MediaItemId>);
 
     fn partition_by_marked_download(&self, fs_file_names: &HashSet<FileName>) -> MarkDownloadedPartition;
 }
@@ -55,23 +54,19 @@ impl AppStorage for StoredItemStore {
         }, Some(limit))
     }
 
-    fn mark_downloaded(&mut self, media_item_ids: &Vec<MediaItemId>) -> CustomResult<()> {
+    fn mark_downloaded(&mut self, media_item_ids: &Vec<MediaItemId>) {
         for id in media_item_ids {
             if let Some(stored_item) = self.data.get_mut(id) {
                 stored_item.mark_downloaded();
             }
         }
-
-        self.persist()
     }
 
-    fn unmark_downloaded(&mut self, media_item_ids: &Vec<MediaItemId>) -> CustomResult<()> {
+    fn unmark_downloaded(&mut self, media_item_ids: &Vec<MediaItemId>) {
         for id in media_item_ids {
             if let Some(stored_item) = self.data.get_mut(id) {
                 stored_item.unmark_downloaded();
             }
         }
-
-        self.persist()
     }
 }
