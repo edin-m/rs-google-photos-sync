@@ -121,7 +121,9 @@ impl GoogleAuthApi {
 fn create_authorization_url(credentials: &GoogleWebCredentials) -> String {
     let scopes = google_photos_api_read_only_scope().join(" ");
 
-    format!("{}?scope={}&response_type=code&redirect_uri={}&access_type=offline&client_id={}",
+    // NOTE: must use prompt=consent otherwise refresh_token is sometimes not returned
+    // https://github.com/googleapis/google-api-python-client/issues/213
+    format!("{}?scope={}&response_type=code&prompt=consent&redirect_uri={}&access_type=offline&client_id={}",
             credentials.auth_uri,
             scopes,
             CALLBACK_URL,
@@ -242,11 +244,12 @@ fn reqwest_token<T>(token_uri: &String, token_request: HashMap<String, String>) 
 {
     let client = reqwest::Client::new();
 
-    let resp = client.post(token_uri.as_str())
+    let resp = client
+        .post(token_uri.as_str())
         .json(&token_request)
-        .send()?.json()?;
+        .send()?
+        .json()?;
 
-    // NOTE: doesn't work with direct result return
     Ok(resp)
 }
 

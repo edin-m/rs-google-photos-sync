@@ -25,7 +25,7 @@ use app_storage::AppStorage;
 use scheduling::JobTask;
 
 use crate::config::Config;
-use crate::error::CustomResult;
+use crate::error::{CustomResult, CustomError};
 use crate::google_api::GoogleAuthApi;
 use crate::google_photos::GooglePhotosApi;
 
@@ -143,7 +143,8 @@ fn main() -> CustomResult<()> {
         storage,
     };
 
-    mark_unmark_downloaded_photos_in_fs(&mut app)?;
+    mark_unmark_downloaded_photos_in_fs(&mut app)
+        .map_err(|e| CustomError::Err(format!("could not mark/unmark downloaded {}", e)))?;
 
     let (tx, rx) = mpsc::channel();
 
@@ -205,11 +206,13 @@ fn get_downloaded_files() -> CustomResult<Box<HashSet<FileName>>>
 
     let mut file_names = Box::new(HashSet::new());
 
-    for entry in path.read_dir()? {
-        if let Ok(entry) = entry {
-            if entry.file_type()?.is_file() {
-                if let Some(file_name) = entry.file_name().into_string().ok() {
-                    file_names.insert(file_name);
+    if path.exists() {
+        for entry in path.read_dir()? {
+            if let Ok(entry) = entry {
+                if entry.file_type()?.is_file() {
+                    if let Some(file_name) = entry.file_name().into_string().ok() {
+                        file_names.insert(file_name);
+                    }
                 }
             }
         }
