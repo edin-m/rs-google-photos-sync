@@ -7,13 +7,16 @@ use std::sync::mpsc;
 use scoped_threadpool::Pool;
 
 use crate::{MediaItemId, StoredItem};
-use crate::error::{CustomResult};
+use crate::error::{CustomResult, CustomError};
 use filetime::FileTime;
 use crate::config::Config;
 
 pub fn download(stored_items: &Vec<StoredItem>) -> CustomResult<Vec<MediaItemId>> {
     let config = Config::new()?;
-    fs::create_dir_all(config.storage_location)?;
+    fs::create_dir_all(&config.storage_location)
+        .map_err(|e| CustomError::Err(
+            format!("error creating dir all {} {}", &config.storage_location, e)
+        ))?;
 
     let group_size = 5;
     let mut pool = Pool::new(group_size);
