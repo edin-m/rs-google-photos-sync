@@ -189,12 +189,12 @@ fn mark_unmark_downloaded_photos_in_fs(app: &mut App) -> CustomResult<()>
 
     let partition = app.storage.partition_by_marked_download(&downloaded);
 
-    if config.fix_mark_downloaded_info.mark_downloaded {
+    if config.fix_downloaded_info.mark_downloaded {
         println!("{} to be mark downloaded", partition.mark_downloaded.len());
         app.storage.mark_downloaded(&partition.mark_downloaded);
     }
 
-    if config.fix_mark_downloaded_info.unmark_downloaded {
+    if config.fix_downloaded_info.unmark_downloaded {
         println!("{} to be unmark downloaded", partition.unmark_downloaded.len());
         app.storage.unmark_downloaded(&partition.unmark_downloaded);
     }
