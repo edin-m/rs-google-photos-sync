@@ -9,7 +9,14 @@ pub struct Config {
     pub search_days_back: i32,
     pub search_limit: usize,
     pub download_files_parallel: i32,
-    pub storage_location: String
+    pub storage_location: String,
+    pub fix_mark_downloaded_info: FixMarkDownloadedInfo
+}
+
+#[derive(Deserialize, Debug)]
+pub struct FixMarkDownloadedInfo {
+    pub mark_downloaded: bool,
+    pub unmark_downloaded: bool
 }
 
 impl Config {

@@ -41,7 +41,7 @@ mod scheduling;
 
 // =============
 // TODO: test periodic save db to file
-// TODO: make configurable mark downloaded both options
+// TODO: improve fix renamed files
 
 #[derive(Serialize, Deserialize, Debug)]
 #[allow(non_snake_case)]
@@ -183,16 +183,21 @@ pub struct MarkDownloadedPartition {
 
 fn mark_unmark_downloaded_photos_in_fs(app: &mut App) -> CustomResult<()>
 {
+    let config = Config::new()?;
     let downloaded = get_downloaded_files()?;
     println!("Total # of files in fs: {}", downloaded.len());
 
     let partition = app.storage.partition_by_marked_download(&downloaded);
 
-    println!("{} to be mark downloaded", partition.mark_downloaded.len());
-    println!("{} to be unmark downloaded", partition.unmark_downloaded.len());
+    if config.fix_mark_downloaded_info.mark_downloaded {
+        println!("{} to be mark downloaded", partition.mark_downloaded.len());
+        app.storage.mark_downloaded(&partition.mark_downloaded);
+    }
 
-    app.storage.mark_downloaded(&partition.mark_downloaded);
-    app.storage.unmark_downloaded(&partition.unmark_downloaded);
+    if config.fix_mark_downloaded_info.unmark_downloaded {
+        println!("{} to be unmark downloaded", partition.unmark_downloaded.len());
+        app.storage.unmark_downloaded(&partition.unmark_downloaded);
+    }
 
     app.storage.persist()?;
 
