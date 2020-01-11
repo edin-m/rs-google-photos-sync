@@ -16,6 +16,11 @@ scoped_threadpool = "0.1.9"
 job_scheduler = "1.1.0"
 filetime = "0.2.8"
 cron = "0.6.0"
+flexi_logger = { version = "0.14.5", default_features = false }
+log = "0.4"
 
 [dev-dependencies]
 spectral = "0.6.0"
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows-service = "0.2.0"

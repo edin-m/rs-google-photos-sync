@@ -9,6 +9,8 @@ extern crate scoped_threadpool;
 #[macro_use]
 extern crate serde;
 extern crate serde_json;
+extern crate flexi_logger;
+extern crate log;
 
 use std::collections::{HashMap, HashSet};
 use std::iter::FromIterator;
@@ -23,9 +25,10 @@ use commander::Commander;
 
 use app_storage::AppStorage;
 use scheduling::JobTask;
+use log::{info, trace, warn, error};
 
 use crate::config::Config;
-use crate::error::{CustomResult, CustomError};
+use crate::error::{CustomError, CustomResult};
 use crate::google_api::GoogleAuthApi;
 use crate::google_photos::GooglePhotosApi;
 
@@ -42,6 +45,7 @@ mod scheduling;
 // =============
 // TODO: test periodic save db to file
 // TODO: improve fix renamed files
+// TODO: add log4rs
 
 #[derive(Serialize, Deserialize, Debug)]
 #[allow(non_snake_case)]
@@ -124,11 +128,33 @@ pub struct DownloadInfo {
 
 pub type StoredItemStore = my_db::KeyValueStore<StoredItem>;
 
+#[cfg(windows)]
+fn install_service() {
+    println!("installing service on windows");
+}
+
+#[cfg(not(windows))]
+fn install_service() {
+    println!("not supported");
+}
+
 fn main() -> CustomResult<()> {
+    flexi_logger::Logger::with_str("info")
+        .format(flexi_logger::detailed_format)
+        .start()
+        .unwrap();
+
+    trace!("t icked sick");
+    info!("i wicked sick");
+    warn!("w wicked sick");
+    error!("e wicked sick");
+
     let command = Commander::new()
         .usage_desc("Read-only sync Google Photos onto a local disk")
         .option_list("-s, --search", "[days back] [limit] Search and store media items", None)
         .option_list("-d, --download", "[num files] Download media items", None)
+        .option_list("--install-service", "install windows service", None)
+        .option_list("--uninstall-service", "install windows service", None)
         .parse_env_or_exit();
 
     let storage = StoredItemStore::new("secrets/photos.data");
@@ -162,6 +188,9 @@ fn main() -> CustomResult<()> {
 
         tx.send(JobTask::DownloadFilesTask(num_items)).unwrap();
         drop(tx);
+    } else if let Some(_service_params) = command.get_list("install-service") {
+        println!("requested install service");
+        install_service();
     } else {
         scheduling::run_job_scheduler(tx.clone())?;
     }
