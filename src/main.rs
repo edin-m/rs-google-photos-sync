@@ -1,6 +1,9 @@
 extern crate chrono;
 extern crate commander;
 extern crate cron;
+extern crate ctrlc;
+extern crate flexi_logger;
+extern crate log;
 #[macro_use]
 extern crate nickel;
 extern crate opener;
@@ -9,28 +12,30 @@ extern crate scoped_threadpool;
 #[macro_use]
 extern crate serde;
 extern crate serde_json;
-extern crate flexi_logger;
-extern crate log;
+#[cfg(windows)]
+extern crate winapi;
 
 use std::collections::{HashMap, HashSet};
 use std::iter::FromIterator;
 use std::option::Option;
 use std::path::Path;
-use std::sync::mpsc;
+use std::process::Command;
+use std::sync::{mpsc, Arc};
 use std::sync::mpsc::Receiver;
 use std::vec::Vec;
 
 use chrono::{DateTime, Utc};
 use commander::Commander;
+use log::{error, info, trace, warn};
 
 use app_storage::AppStorage;
 use scheduling::JobTask;
-use log::{info, trace, warn, error};
 
 use crate::config::Config;
 use crate::error::{CustomError, CustomResult};
 use crate::google_api::GoogleAuthApi;
 use crate::google_photos::GooglePhotosApi;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 mod downloader;
 mod error;
@@ -41,6 +46,7 @@ mod util;
 mod config;
 mod app_storage;
 mod scheduling;
+mod service;
 
 // =============
 // TODO: test periodic save db to file
@@ -128,35 +134,38 @@ pub struct DownloadInfo {
 
 pub type StoredItemStore = my_db::KeyValueStore<StoredItem>;
 
-#[cfg(windows)]
-fn install_service() {
-    println!("installing service on windows");
-}
-
-#[cfg(not(windows))]
-fn install_service() {
-    println!("not supported");
-}
-
 fn main() -> CustomResult<()> {
     flexi_logger::Logger::with_str("info")
         .format(flexi_logger::detailed_format)
         .start()
         .unwrap();
 
-    trace!("t icked sick");
-    info!("i wicked sick");
-    warn!("w wicked sick");
-    error!("e wicked sick");
-
     let command = Commander::new()
         .usage_desc("Read-only sync Google Photos onto a local disk")
         .option_list("-s, --search", "[days back] [limit] Search and store media items", None)
         .option_list("-d, --download", "[num files] Download media items", None)
-        .option_list("--install-service", "install windows service", None)
-        .option_list("--uninstall-service", "install windows service", None)
+        .option("--install", "install windows service", None)
+        .option("--uninstall-service", "install windows service", None)
         .parse_env_or_exit();
 
+    if let Some(install) = command.get("install") {
+        if install {
+            println!("requested install service");
+            service::install_service();
+        }
+    } else if let Some(uninstall) = command.get("uninstall") {
+        if uninstall {
+            println!("requested uninstall service");
+            service::uninstall_service();
+        }
+    } else  {
+        return main_ex(&command);
+    }
+
+    Ok(())
+}
+
+fn main_ex(command: &Commander) -> CustomResult<()> {
     let storage = StoredItemStore::new("secrets/photos.data");
     let mut google_auth = google_api::GoogleAuthApi::create();
     let token = google_auth.authenticate_or_renew()?;
@@ -188,11 +197,15 @@ fn main() -> CustomResult<()> {
 
         tx.send(JobTask::DownloadFilesTask(num_items)).unwrap();
         drop(tx);
-    } else if let Some(_service_params) = command.get_list("install-service") {
-        println!("requested install service");
-        install_service();
     } else {
-        scheduling::run_job_scheduler(tx.clone())?;
+        let stop_flag = Arc::new(AtomicBool::new(false));
+        let stop_flag_cloned = stop_flag.clone();
+        // TODO: no need for ctrlc
+//        ctrlc::set_handler(move || {
+//            println!("RECEIVED CTRLC");
+//            stop_flag.store(true, Ordering::SeqCst);
+//        }).expect("Error setting ctrl-c handle");
+        scheduling::run_job_scheduler(tx, stop_flag_cloned)?;
     }
 
     let res = run_task_receiver(&rx, app);
