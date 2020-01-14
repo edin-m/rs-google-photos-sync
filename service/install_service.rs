@@ -14,21 +14,19 @@ fn install_service() -> windows_service::Result<()> {
         service_manager::{ServiceManager, ServiceManagerAccess},
     };
 
+    println!("Accessing service manager");
     let manager_access = ServiceManagerAccess::CONNECT | ServiceManagerAccess::CREATE_SERVICE;
     let service_manager = ServiceManager::local_computer(
         None::<&str>, manager_access
-    ).map_err();
+    )?;
 
-    // This example installs the service defined in `examples/ping_service.rs`.
-    // In the real world code you would set the executable path to point to your own binary
-    // that implements windows service.
     let service_binary_path = ::std::env::current_exe()
         .unwrap()
-        .with_file_name("ping_service.exe");
+        .with_file_name("rs_google_photos_sync.exe");
 
     let service_info = ServiceInfo {
-        name: OsString::from("ping_service"),
-        display_name: OsString::from("Ping service"),
+        name: OsString::from("rs_google_photos_sync"),
+        display_name: OsString::from("Sync-down Google Photos service"),
         service_type: ServiceType::OWN_PROCESS,
         start_type: ServiceStartType::OnDemand,
         error_control: ServiceErrorControl::Normal,
@@ -38,6 +36,8 @@ fn install_service() -> windows_service::Result<()> {
         account_name: None, // run as System
         account_password: None,
     };
+
+    println!("creating service");
     let result = service_manager.create_service(service_info, ServiceAccess::empty());
 
     if result.is_err() {

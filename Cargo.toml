@@ -29,4 +29,8 @@ winapi = "0.3.8"
 
 [[bin]]
 name = "install_service"
-path = "src/install_service.rs"
+path = "service/install_service.rs"
+
+[[bin]]
+name = "uninstall_service"
+path = "service/uninstall_service.rs"
