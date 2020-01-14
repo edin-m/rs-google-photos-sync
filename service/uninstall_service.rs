@@ -3,7 +3,7 @@ use std::io::Error;
 #[cfg(windows)]
 fn main() -> windows_service::Result<()> {
     if let Err(e) = uninstall_service() {
-        show_msgbox(format!("{}. Run as admin.", e).as_str());
+        show_msgbox(format!("{}. Service not there or run as admin.", e).as_str());
     } else {
         show_msgbox("Uninstalled successfully.");
     }
