@@ -144,9 +144,18 @@ fn main() -> CustomResult<()> {
         .usage_desc("Read-only sync Google Photos onto a local disk")
         .option_list("-s, --search", "[days back] [limit] Search and store media items", None)
         .option_list("-d, --download", "[num files] Download media items", None)
+        .option("--winservice", "When running as a windows service", None)
+        // TODO: remove
         .option("--install", "install windows service", None)
         .option("--uninstall-service", "install windows service", None)
         .parse_env_or_exit();
+
+    println!("is win service");
+    if let Some(value) = command.get("winservice") {
+        if value {
+            println!("win service");
+        }
+    }
 
     if let Some(install) = command.get("install") {
         if install {

@@ -1,14 +1,13 @@
-use std::io::Error;
+mod show_msg;
 
 #[cfg(windows)]
-fn main() -> windows_service::Result<()> {
+fn main() {
     if let Err(e) = uninstall_service() {
-        show_msgbox(format!("{}. Service not there or run as admin.", e).as_str());
+        println!("{}", e);
+        show_msg::show_msg(format!("{}. Service not there or run as admin.", e).as_str());
     } else {
-        show_msgbox("Uninstalled successfully.");
+        show_msg::show_msg("Uninstalled successfully.");
     }
-
-    Ok(())
 }
 
 #[cfg(windows)]
@@ -50,30 +49,4 @@ fn uninstall_service() -> Result<(), String> {
     })?;
 
     Ok(())
-}
-
-#[cfg(windows)]
-fn show_msgbox(msg: &str) {
-    use std::ffi::OsStr;
-    use std::iter::once;
-    use std::os::windows::ffi::OsStrExt;
-    use std::ptr::null_mut;
-    use winapi::um::winuser::{MB_OK, MessageBoxW};
-
-    let wide: Vec<u16> = OsStr::new(msg).encode_wide().chain(once(0)).collect();
-    let ret = unsafe {
-        MessageBoxW(null_mut(), wide.as_ptr(), wide.as_ptr(), MB_OK)
-    };
-    let x = if ret == 0 {
-        Err(Error::last_os_error())
-    } else {
-        Ok(ret)
-    };
-
-    println!("{:#?}", x);
-}
-
-#[cfg(not(windows))]
-fn main() {
-    panic!("This program is only intended to run on Windows.");
 }
