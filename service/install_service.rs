@@ -10,6 +10,11 @@ fn main() {
     }
 }
 
+#[cfg(not(windows))]
+fn main() {
+    panic!("Only windows supported!");
+}
+
 #[cfg(windows)]
 fn install_service() -> Result<(), String> {
     use std::ffi::OsString;

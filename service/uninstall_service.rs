@@ -10,6 +10,11 @@ fn main() {
     }
 }
 
+#[cfg(not(windows))]
+fn main() {
+    panic!("Only windows supported!");
+}
+
 #[cfg(windows)]
 fn uninstall_service() -> Result<(), String> {
     use std::{thread, time::Duration};
