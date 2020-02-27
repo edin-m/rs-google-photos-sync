@@ -1,7 +1,6 @@
 extern crate chrono;
 extern crate commander;
 extern crate cron;
-extern crate ctrlc;
 extern crate flexi_logger;
 extern crate log;
 #[macro_use]
@@ -35,7 +34,9 @@ use crate::config::Config;
 use crate::error::{CustomError, CustomResult};
 use crate::google_api::GoogleAuthApi;
 use crate::google_photos::GooglePhotosApi;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool};
+use flexi_logger::{Logger, LogTarget};
+use flexi_logger::writers::FileLogWriter;
 
 mod downloader;
 mod error;
@@ -46,7 +47,6 @@ mod util;
 mod config;
 mod app_storage;
 mod scheduling;
-mod service;
 
 // =============
 // TODO: test periodic save db to file
@@ -134,44 +134,47 @@ pub struct DownloadInfo {
 
 pub type StoredItemStore = my_db::KeyValueStore<StoredItem>;
 
-fn main() -> CustomResult<()> {
-    flexi_logger::Logger::with_str("info")
+fn main2() {
+    let exe_path = format!("{}", std::env::current_exe().unwrap().parent().unwrap().display());
+
+    let criterion = flexi_logger::Criterion::Age(flexi_logger::Age::Day);
+
+    flexi_logger::Logger::with_env_or_str("info")
+        .log_target(LogTarget::StdOut)
+        .log_to_file()
+        .directory(exe_path)
         .format(flexi_logger::detailed_format)
+        .print_message()
+        .rotate(criterion, flexi_logger::Naming::Timestamps, flexi_logger::Cleanup::KeepLogFiles(1))
         .start()
         .unwrap();
+
+    info!("Started application!");
+}
+
+fn main() -> CustomResult<()> {
+    let exe_path = format!("{}", std::env::current_exe().unwrap().parent().unwrap().display());
+
+    let criterion = flexi_logger::Criterion::Age(flexi_logger::Age::Day);
+
+    flexi_logger::Logger::with_env_or_str("info")
+        .log_target(LogTarget::StdOut)
+        .log_to_file()
+        .directory(exe_path)
+        .format(flexi_logger::detailed_format)
+        .print_message()
+        .rotate(criterion, flexi_logger::Naming::Timestamps, flexi_logger::Cleanup::KeepLogFiles(3))
+        .start()
+        .unwrap();
+
+    info!("Started application!");
 
     let command = Commander::new()
         .usage_desc("Read-only sync Google Photos onto a local disk")
         .option_list("-s, --search", "[days back] [limit] Search and store media items", None)
         .option_list("-d, --download", "[num files] Download media items", None)
-        .option("--winservice", "When running as a windows service", None)
         .parse_env_or_exit();
 
-    println!("is win service");
-    if let Some(value) = command.get("winservice") {
-        if value {
-            println!("win service");
-        }
-    }
-
-    if let Some(install) = command.get("install") {
-        if install {
-            println!("requested install service");
-            service::install_service();
-        }
-    } else if let Some(uninstall) = command.get("uninstall") {
-        if uninstall {
-            println!("requested uninstall service");
-            service::uninstall_service();
-        }
-    } else  {
-        return main_ex(&command);
-    }
-
-    Ok(())
-}
-
-fn main_ex(command: &Commander) -> CustomResult<()> {
     let storage = StoredItemStore::new("secrets/photos.data");
     let mut google_auth = google_api::GoogleAuthApi::create();
     let token = google_auth.authenticate_or_renew()?;
@@ -206,11 +209,6 @@ fn main_ex(command: &Commander) -> CustomResult<()> {
     } else {
         let stop_flag = Arc::new(AtomicBool::new(false));
         let stop_flag_cloned = stop_flag.clone();
-        // TODO: no need for ctrlc
-//        ctrlc::set_handler(move || {
-//            println!("RECEIVED CTRLC");
-//            stop_flag.store(true, Ordering::SeqCst);
-//        }).expect("Error setting ctrl-c handle");
         scheduling::run_job_scheduler(tx, stop_flag_cloned)?;
     }
 

@@ -16,3 +16,4 @@ secrets
 google
 tray
 *.iml
+*.log
